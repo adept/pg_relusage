@@ -15,12 +15,12 @@ delete from test;
 LOG:  relations used: test
 create view vw_test as select * from test;
 COPY  ( select * from vw_test t1 join test t2 using ( id ) ) TO STDOUT ;
-LOG:  relations used: test
+LOG:  relations used: test,vw_test
 COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
-LOG:  relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
 COPY  ( with stats as ( select * from pg_stats limit 1 ) select * from stats ) TO STDOUT ;
-LOG:  relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
 create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 COPY  ( select * from vw_temp_test ) TO STDOUT ;
-LOG:  relations used: temp_test
+LOG:  relations used: vw_temp_test,temp_test
