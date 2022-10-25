@@ -70,12 +70,17 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
   Oid oid;
   StringInfoData buf;
   bool buf_empty=true;
+  char kind;
     
   initStringInfo(&buf);
 
   foreach(lst, queryDesc -> plannedstmt -> relationOids) {
     bool seen = false;
     oid = lfirst_oid(lst);
+    kind = get_rel_relkind(oid);
+
+    // Exclude things with unknown relkind, and only process tables, sequences, materialized views, partitioned tables, and foreign tables
+    if (!kind || !(kind == 'r' || kind == 'S' || kind == 'm' || kind == 'p' || kind == 'f')) continue;
     
     // Oid list is not deduplicated so we check if the same oid was mentioned before
     foreach(lst2, queryDesc -> plannedstmt -> relationOids) {

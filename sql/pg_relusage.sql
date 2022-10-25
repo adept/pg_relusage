@@ -34,3 +34,10 @@ create view vw_test as select * from test;
 -- CTEs
 -------
 \copy (with stats as (select * from pg_stats limit 1) select * from stats) to '/dev/null';
+
+------------------------
+-- TEMP TABLES AND VIEWS
+------------------------
+create temp table temp_test(t text);
+create temp view vw_temp_test as select * from temp_test;
+\copy (select * from vw_temp_test) to '/dev/null';

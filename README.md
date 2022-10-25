@@ -22,7 +22,7 @@ select * from pg_stats limit 1;
 should produce log message along the lines of:
 
 ```
-relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
 ```
 
 ## Limitations
