@@ -1,0 +1,43 @@
+{
+   "name": "pg_relusage",
+   "abstract": "An extension to log all the queries that reference a particular column",
+   "version": "__VERSION__",
+   "maintainer": "Dmitry Astapov <dastapov@gmail.com>",
+   "license": "postgresql",
+   "release_status": "stable",
+   "provides": {
+      "pg_relusage": {
+         "abstract": "An extension to log all the queries that reference a particular column",
+         "file": "pg_relusage.c",
+         "docfile": "README.md",
+         "version": "__VERSION__"
+      }
+   },
+   "resources": {
+      "bugtracker": {
+         "web": "https://github.com/adept/pg_relusage/issues"
+      },
+      "repository": {
+        "url":  "https://github.com/dastapov/pg_relusage.git",
+        "web":  "https://github.com/dastapov/pg_relusage",
+        "type": "git"
+      }
+   },
+   "prereqs": {
+       "runtime": {
+           "requires": {
+               "PostgreSQL": "9.4.0"
+           }
+       }
+   },
+   "generated_by": "Dmitry Astapov",
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "http://pgxn.org/meta/spec.txt"
+   },
+   "tags": [
+      "logging",
+      "log",
+      "usage"
+   ]
+}

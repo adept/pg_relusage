@@ -1,0 +1,12 @@
+*.o
+*.a
+*.so
+*.pc
+*~
+.*.sw?
+.deps/
+results/
+*.bc
+*.diffs
+*.BAK
+*.zip

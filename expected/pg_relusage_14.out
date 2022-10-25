@@ -1,0 +1,22 @@
+load 'pg_relusage';
+set client_min_messages to LOG;
+create table test(id serial, t text);
+COPY  ( select * from test ) TO STDOUT ;
+LOG:  relations used: test
+COPY  ( select * from test t1 join test t2 using ( id ) ) TO STDOUT ;
+LOG:  relations used: test
+COPY  ( select * from pg_class c1 join pg_class c2 using ( relname ) limit 1 ) TO STDOUT ;
+LOG:  relations used: pg_class
+insert into test(t) values ('test');
+LOG:  relations used: test,test_id_seq
+update test set t = t||t;
+LOG:  relations used: test
+delete from test;
+LOG:  relations used: test
+create view vw_test as select * from test;
+COPY  ( select * from vw_test t1 join test t2 using ( id ) ) TO STDOUT ;
+LOG:  relations used: test,vw_test
+COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+COPY  ( with stats as ( select * from pg_stats limit 1 ) select * from stats ) TO STDOUT ;
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace

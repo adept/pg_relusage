@@ -1,0 +1,4 @@
+# pg_relusage extension
+comment = 'Log all the queries that reference a particular column'
+default_version = '0.0.1'
+module_pathname = '$libdir/pg_relusage'
