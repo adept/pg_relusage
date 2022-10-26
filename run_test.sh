@@ -1,5 +1,5 @@
 #!/bin/bash
-setopt -e -o pipefail
+set -euxo pipefail
 
 ver="$1"
 
