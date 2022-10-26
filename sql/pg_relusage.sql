@@ -41,3 +41,14 @@ create view vw_test as select * from test;
 create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 \copy (select * from vw_temp_test) to '/dev/null';
+
+------
+-- GUC
+------
+set pg_relusage.log_level = 'INFO';
+set pg_relusage.rel_kinds = 'r';
+\copy (select * from pg_stats limit 1) to '/dev/null';
+
+set pg_relusage.log_level = 'NOTICE';
+set pg_relusage.rel_kinds = 'v';
+\copy (select * from pg_stats limit 1) to '/dev/null';

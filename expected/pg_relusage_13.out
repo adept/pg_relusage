@@ -24,3 +24,11 @@ create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 COPY  ( select * from vw_temp_test ) TO STDOUT ;
 LOG:  relations used: vw_temp_test,temp_test
+set pg_relusage.log_level = 'INFO';
+set pg_relusage.rel_kinds = 'r';
+COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+INFO:  relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
+set pg_relusage.log_level = 'NOTICE';
+set pg_relusage.rel_kinds = 'v';
+COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+NOTICE:  relations used: pg_stats
