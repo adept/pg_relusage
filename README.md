@@ -6,7 +6,7 @@ pg_relusage is a PostgreSQL extension which allows one to discover and log the r
 
 ## Why?
 
-This extension will be useful if you are dealing with (large?) legacy database and suspect that (you suspect) contains plenty of unused objects.
+This extension will be useful if you are dealing with (large?) legacy database and suspect that it contains plenty of unused objects.
 
 This extension will allow you to quickly get an understanding of which clients use which objects / relations. Unlike statement log, which will only show you the views and tables explicitly referenced by the query, this extension will cut look at the result of view expansion, unused joins elimination etc etc and report the relations that were *actually* used by the statement.
 
