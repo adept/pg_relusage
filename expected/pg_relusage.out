@@ -1,34 +1,55 @@
 load 'pg_relusage';
 set client_min_messages to LOG;
+---------
+-- TABLES
+---------
 create table test(id serial, t text);
-COPY  ( select * from test ) TO STDOUT ;
+-- we detect 'test' in a simple query
+\copy (select * from test) to '/dev/null';
 LOG:  relations used: test
-COPY  ( select * from test t1 join test t2 using ( id ) ) TO STDOUT ;
+-- multiple references reported only once
+\copy (select * from test t1 join test t2 using (id)) to '/dev/null';
 LOG:  relations used: test
-COPY  ( select * from pg_class c1 join pg_class c2 using ( relname ) limit 1 ) TO STDOUT ;
+-- this works with built-in tables as well
+\copy (select * from pg_class c1 join pg_class c2 using (relname) limit 1) to '/dev/null';
 LOG:  relations used: pg_class
+-- insert, update, delete statements all covered
 insert into test(t) values ('test');
 LOG:  relations used: test,test_id_seq
 update test set t = t||t;
 LOG:  relations used: test
 delete from test;
 LOG:  relations used: test
+--------
+-- VIEWS
+--------
 create view vw_test as select * from test;
-COPY  ( select * from vw_test t1 join test t2 using ( id ) ) TO STDOUT ;
+-- we detect 'test' as the only relation used here
+\copy (select * from vw_test t1 join test t2 using (id)) to '/dev/null';
 LOG:  relations used: test,vw_test
-COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+-- more complex built-in view
+\copy (select * from pg_stats limit 1) to '/dev/null';
 LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
-COPY  ( with stats as ( select * from pg_stats limit 1 ) select * from stats ) TO STDOUT ;
+-------
+-- CTEs
+-------
+\copy (with stats as (select * from pg_stats limit 1) select * from stats) to '/dev/null';
 LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+------------------------
+-- TEMP TABLES AND VIEWS
+------------------------
 create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
-COPY  ( select * from vw_temp_test ) TO STDOUT ;
+\copy (select * from vw_temp_test) to '/dev/null';
 LOG:  relations used: vw_temp_test,temp_test
+------
+-- GUC
+------
 set pg_relusage.log_level = 'INFO';
 set pg_relusage.rel_kinds = 'r';
-COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+\copy (select * from pg_stats limit 1) to '/dev/null';
 INFO:  relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
 set pg_relusage.log_level = 'NOTICE';
 set pg_relusage.rel_kinds = 'v';
-COPY  ( select * from pg_stats limit 1 ) TO STDOUT ;
+\copy (select * from pg_stats limit 1) to '/dev/null';
 NOTICE:  relations used: pg_stats
