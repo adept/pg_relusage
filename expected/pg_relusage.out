@@ -42,6 +42,59 @@ create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 \copy (select * from vw_temp_test) to '/dev/null';
 LOG:  relations used: vw_temp_test,temp_test
+----------------
+-- SQL functions
+----------------
+create function test_sql_f(i int) returns text
+language sql
+as $_$
+select t from test where id = i
+$_$;
+select * from test_sql_f(42);
+LOG:  relations used: test
+ test_sql_f 
+------------
+ 
+(1 row)
+
+-----------
+-- PL/pgSQL
+-----------
+create function test_pgsql_f(t text) returns text
+language plpgsql
+as $_$
+declare
+  res text;
+begin
+select t into res from pg_stats where tablename = t;
+return res;
+end;
+$_$;
+select * from test_pgsql_f('foobar');
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+ test_pgsql_f 
+--------------
+ 
+(1 row)
+
+-- dynamic queries
+create function test_pgsql_dyn_f(t text) returns text
+language plpgsql
+as $_$
+declare
+  res text;
+begin
+execute $$ select schemaname from pg_stats where tablename = $$ || quote_literal(t) into res;
+return res;
+end;
+$_$;
+select * from test_pgsql_dyn_f('foobar');
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+ test_pgsql_dyn_f 
+------------------
+ 
+(1 row)
+
 ------
 -- GUC
 ------

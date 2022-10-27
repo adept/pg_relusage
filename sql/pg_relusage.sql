@@ -42,6 +42,47 @@ create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 \copy (select * from vw_temp_test) to '/dev/null';
 
+----------------
+-- SQL functions
+----------------
+create function test_sql_f(i int) returns text
+language sql
+as $_$
+select t from test where id = i
+$_$;
+
+select * from test_sql_f(42);
+
+-----------
+-- PL/pgSQL
+-----------
+create function test_pgsql_f(t text) returns text
+language plpgsql
+as $_$
+declare
+  res text;
+begin
+select t into res from pg_stats where tablename = t;
+return res;
+end;
+$_$;
+
+select * from test_pgsql_f('foobar');
+
+-- dynamic queries
+create function test_pgsql_dyn_f(t text) returns text
+language plpgsql
+as $_$
+declare
+  res text;
+begin
+execute $$ select schemaname from pg_stats where tablename = $$ || quote_literal(t) into res;
+return res;
+end;
+$_$;
+
+select * from test_pgsql_dyn_f('foobar');
+
 ------
 -- GUC
 ------
@@ -52,3 +93,4 @@ set pg_relusage.rel_kinds = 'r';
 set pg_relusage.log_level = 'NOTICE';
 set pg_relusage.rel_kinds = 'v';
 \copy (select * from pg_stats limit 1) to '/dev/null';
+
