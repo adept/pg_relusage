@@ -2,6 +2,8 @@
 
 pg_relusage is a PostgreSQL extension which allows one to discover and log the relations used in SQL statements.
 
+![regression tests](https://github.com/adept/pg_relusage/actions/workflows/ci.yml/badge.svg)
+
 ## Why?
 
 This extension will be useful if you are dealing with (large?) legacy database and suspect that (you suspect) contains plenty of unused objects.
@@ -42,7 +44,7 @@ Extension provides two user settings:
 
 ## Limitations
 
-Not tested on PostgreSQL below v10 (though it should work).
+The earliest supported version is PostgreSQL v9.5.
 
 ## Development and testing
 
