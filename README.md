@@ -48,4 +48,4 @@ The earliest supported version is PostgreSQL v9.5.
 
 ## Development and testing
 
-You can run `./all_tests.sh` to run tests for all supported PostgreSQL versions or `./run_test 11` to test just the specific version (11, in this case).
+In addition to `make install && make installcheck`, you can run `./all_tests.sh` to run tests in the Docker container (which will test all supported PostgreSQL versions) or `./run_test 11` to test just the specific version (11, in this case).
