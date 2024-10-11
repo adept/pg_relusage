@@ -1,16 +1,16 @@
 {
    "name": "pg_relusage",
-   "abstract": "An extension to log all the queries that reference a particular column",
-   "version": "__VERSION__",
+   "abstract": "An extension to log all the relations used in SQL statements and functions",
+   "version": "0.0.1",
    "maintainer": "Dmitry Astapov <dastapov@gmail.com>",
    "license": "postgresql",
    "release_status": "stable",
    "provides": {
       "pg_relusage": {
-         "abstract": "An extension to log all the queries that reference a particular column",
+         "abstract": "An extension to log all the relations used in SQL statements and functions",
          "file": "pg_relusage.c",
          "docfile": "README.md",
-         "version": "__VERSION__"
+         "version": "0.0.1"
       }
    },
    "resources": {
@@ -18,15 +18,15 @@
          "web": "https://github.com/adept/pg_relusage/issues"
       },
       "repository": {
-        "url":  "https://github.com/dastapov/pg_relusage.git",
-        "web":  "https://github.com/dastapov/pg_relusage",
+        "url":  "https://github.com/adept/pg_relusage.git",
+        "web":  "https://github.com/adept/pg_relusage",
         "type": "git"
       }
    },
    "prereqs": {
        "runtime": {
            "requires": {
-               "PostgreSQL": "9.4.0"
+               "PostgreSQL": ">= 9.5.0"
            }
        }
    },

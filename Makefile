@@ -12,7 +12,6 @@ release-zip: all
 	git archive --format zip --prefix=pg_relusage-$(EXTVERSION)/ --output ./pg_relusage-$(EXTVERSION).zip HEAD
 	unzip ./pg_relusage-$(EXTVERSION).zip
 	rm ./pg_relusage-$(EXTVERSION).zip
-	sed -i -e "s/__VERSION__/$(EXTVERSION)/g"  ./pg_relusage-$(EXTVERSION)/META.json
 	zip -r ./pg_relusage-$(EXTVERSION).zip ./pg_relusage-$(EXTVERSION)/
 	rm ./pg_relusage-$(EXTVERSION) -rf
 
