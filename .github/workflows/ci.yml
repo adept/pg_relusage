@@ -18,5 +18,5 @@ jobs:
       - run: pg-start ${{ matrix.pg }}
       - uses: actions/checkout@v3
       - run: |
-        cp expected/pg_relusage_${{ matrix.pg }}.out expected/pg_relusage.out
-        pg-build-test
+          cp expected/pg_relusage_${{ matrix.pg }}.out expected/pg_relusage.out
+          pg-build-test
