@@ -3,12 +3,10 @@ set -euxo pipefail
 
 ver="$1"
 
-docker build . --build-arg "PG_VER=${ver}" --tag pg_relusage_test:${ver}
+rm -f *.o *.so *.bc
 
-docker run --name pg_relusage_test_${ver} -d --rm -p 5432:5432 pg_relusage_test:${ver}
+docker run -it --rm -w /repo -e AS_USER=worker -e LOCAL_UID=$(id -u) \
+    --volume "$PWD:/repo" pgxn/pgxn-tools \
+    sh -c "sudo pg-start ${ver} && cp expected/pg_relusage_${ver}.out expected/pg_relusage.out && (pg-build-test || mv results/pg_relusage.out expected/pg_relusage_${ver}.out)"
 
-sleep 2
-
-PGPASSWORD=relusage psql -h localhost -d relusage -U relusage --echo-queries --quiet < sql/pg_relusage.sql > expected/pg_relusage_${ver}.out 2>&1
-
-docker stop pg_relusage_test_${ver}
+rm -f expected/pg_relusage.out
