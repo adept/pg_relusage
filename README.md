@@ -23,16 +23,25 @@ After installation, extension has to be either loaded into a single client proce
 
 Once extension is loaded, each SQL statement will emit one extra log message which will list all the referenced relations, as a comma-separated list of schema-qualified names. Relations in the `public` schema are reported without the schema name, to keep the logs smaller. Names are quoted the same way as in SQL when necessary (e.g. `"My Schema"."we,ird"`), and relations in temporary schemas are reported as `pg_temp.<name>`.
 
-Statement:
+For example, given
 
 ```
-select * from pg_stats limit 1;
+create table owners(id int primary key, name text);
+create table items(id int, owner_id int, val text);
+create view vw_items as
+  select i.id, i.val, o.name as owner from items i join owners o on o.id = i.owner_id;
+```
+
+statement
+
+```
+select * from vw_items where owner = 'alice';
 ```
 
 should produce log message along the lines of:
 
 ```
-relations used: pg_catalog.pg_stats,pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_namespace,pg_catalog.pg_statistic_relid_att_inh_index,pg_catalog.pg_class_oid_index
+relations used: vw_items,items,owners
 ```
 
 ### What counts as "used"
@@ -49,6 +58,8 @@ In addition, the following are reported:
 * indexes used by the plan (index scans, index-only scans and bitmap index scans);
 * views referenced by the statement, together with the relations they expand to;
 * relations referenced by name through a `regclass` constant, such as sequences used via `nextval('some_seq')` (including `serial`/`identity`-style column defaults: `insert into test ...` reports `test,test_id_seq`), `'some_table'::regclass` literals, and functions taking a `regclass` argument, such as `pg_relation_size('some_table')`. Such statements would break if the relation was dropped, so they are reported as users of it, even though its contents are never read.
+
+System catalogs (relations in `pg_catalog`, `pg_toast` and `information_schema`) are never reported. They cannot be dropped anyway, and catalog queries issued by tools (psql, GUI clients, ORMs) would otherwise flood the log.
 
 If the plan contains a node type that pg_relusage does not recognize (e.g. one introduced by a newer PostgreSQL version), it falls back to reporting all the relations that the plan depends on, without eliminating anything.
 

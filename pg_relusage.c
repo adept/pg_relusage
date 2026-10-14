@@ -25,6 +25,8 @@
 #include "utils/lsyscache.h"
 #include "utils/builtins.h"
 #include "catalog/namespace.h"
+#include "catalog/catalog.h"
+#include "catalog/pg_namespace.h"
 #include "utils/guc.h"
 #if PG_VERSION_NUM >= 90600
 #include "access/parallel.h"
@@ -276,11 +278,21 @@ pg_relusage_append_relation(StringInfo buf, Oid oid)
   if (!HeapTupleIsValid(tp)) return;
   reltup = (Form_pg_class) GETSTRUCT(tp);
 
-  if (strchr(pg_relusage_rel_kinds, reltup->relkind)) {
+  // System catalogs (pg_catalog, pg_toast, information_schema) are never
+  // reported: they cannot be dropped, and queries from tools (psql, ORMs, etc.)
+  // would flood the log with them
+  if (strchr(pg_relusage_rel_kinds, reltup->relkind)
+      && reltup->relnamespace != PG_CATALOG_NAMESPACE
+      && !IsToastNamespace(reltup->relnamespace)) {
     // Temporary schemas are named pg_temp_N, where N varies between sessions,
     // so we report all of them as pg_temp
     char *nspname = isAnyTempNamespace(reltup->relnamespace)
       ? "pg_temp" : get_namespace_name(reltup->relnamespace);
+
+    if (nspname && strcmp(nspname, "information_schema") == 0) {
+      ReleaseSysCache(tp);
+      return;
+    }
 
     // Relations in "public" are reported without schema, to keep logs smaller
     if (nspname && strcmp(nspname, "public") == 0)

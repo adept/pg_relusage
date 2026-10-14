@@ -11,8 +11,10 @@ create table test(id serial, t text);
 -- multiple references reported only once
 \copy (select * from test t1 join test t2 using (id)) to '/dev/null';
 
--- this works with built-in tables as well
+-- system catalogs are not reported
 \copy (select * from pg_class c1 join pg_class c2 using (relname) limit 1) to '/dev/null';
+\copy (select * from information_schema.tables limit 1) to '/dev/null';
+\copy (select * from test, pg_namespace) to '/dev/null';
 
 -- insert, update, delete statements all covered
 insert into test(t) values ('test');
@@ -27,13 +29,17 @@ create view vw_test as select * from test;
 -- we detect 'test' as the only relation used here
 \copy (select * from vw_test t1 join test t2 using (id)) to '/dev/null';
 
--- more complex built-in view
-\copy (select * from pg_stats limit 1) to '/dev/null';
+-- more complex view
+create table owners(id int primary key, name text);
+create table items(id int, owner_id int, val text);
+create view vw_items as
+  select i.id, i.val, o.name as owner from items i join owners o on o.id = i.owner_id;
+\copy (select * from vw_items limit 1) to '/dev/null';
 
 -------
 -- CTEs
 -------
-\copy (with stats as (select * from pg_stats limit 1) select * from stats) to '/dev/null';
+\copy (with x as (select * from vw_items limit 1) select * from x) to '/dev/null';
 
 ------------------------
 -- TEMP TABLES AND VIEWS
@@ -56,13 +62,13 @@ select * from test_sql_f(42);
 -----------
 -- PL/pgSQL
 -----------
-create function test_pgsql_f(t text) returns text
+create function test_pgsql_f(p_owner text) returns text
 language plpgsql
 as $_$
 declare
   res text;
 begin
-select t into res from pg_stats where tablename = t;
+select val into res from vw_items where owner = p_owner;
 return res;
 end;
 $_$;
@@ -70,13 +76,13 @@ $_$;
 select * from test_pgsql_f('foobar');
 
 -- dynamic queries
-create function test_pgsql_dyn_f(t text) returns text
+create function test_pgsql_dyn_f(p_owner text) returns text
 language plpgsql
 as $_$
 declare
   res text;
 begin
-execute $$ select schemaname from pg_stats where tablename = $$ || quote_literal(t) into res;
+execute $$ select val from vw_items where owner = $$ || quote_literal(p_owner) into res;
 return res;
 end;
 $_$;
@@ -161,9 +167,9 @@ create table "we,ird"(a int);
 ------
 set pg_relusage.log_level = 'INFO';
 set pg_relusage.rel_kinds = 'r';
-\copy (select * from pg_stats limit 1) to '/dev/null';
+\copy (select * from vw_items limit 1) to '/dev/null';
 
 set pg_relusage.log_level = 'NOTICE';
 set pg_relusage.rel_kinds = 'v';
-\copy (select * from pg_stats limit 1) to '/dev/null';
+\copy (select * from vw_items limit 1) to '/dev/null';
 
