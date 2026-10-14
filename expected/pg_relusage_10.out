@@ -12,7 +12,7 @@ LOG:  relations used: test
 LOG:  relations used: test
 -- this works with built-in tables as well
 \copy (select * from pg_class c1 join pg_class c2 using (relname) limit 1) to '/dev/null';
-LOG:  relations used: pg_class,pg_class_relname_nsp_index
+LOG:  relations used: pg_catalog.pg_class,pg_catalog.pg_class_relname_nsp_index
 -- insert, update, delete statements all covered
 insert into test(t) values ('test');
 LOG:  relations used: test,test_id_seq
@@ -29,19 +29,19 @@ create view vw_test as select * from test;
 LOG:  relations used: test,vw_test
 -- more complex built-in view
 \copy (select * from pg_stats limit 1) to '/dev/null';
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index,pg_class_oid_index
+LOG:  relations used: pg_catalog.pg_stats,pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_namespace,pg_catalog.pg_statistic_relid_att_inh_index,pg_catalog.pg_attribute_relid_attnum_index,pg_catalog.pg_class_oid_index
 -------
 -- CTEs
 -------
 \copy (with stats as (select * from pg_stats limit 1) select * from stats) to '/dev/null';
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index,pg_class_oid_index
+LOG:  relations used: pg_catalog.pg_stats,pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_namespace,pg_catalog.pg_statistic_relid_att_inh_index,pg_catalog.pg_attribute_relid_attnum_index,pg_catalog.pg_class_oid_index
 ------------------------
 -- TEMP TABLES AND VIEWS
 ------------------------
 create temp table temp_test(t text);
 create temp view vw_temp_test as select * from temp_test;
 \copy (select * from vw_temp_test) to '/dev/null';
-LOG:  relations used: vw_temp_test,temp_test
+LOG:  relations used: pg_temp.vw_temp_test,pg_temp.temp_test
 ----------------
 -- SQL functions
 ----------------
@@ -71,7 +71,7 @@ return res;
 end;
 $_$;
 select * from test_pgsql_f('foobar');
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_statistic_relid_att_inh_index
+LOG:  relations used: pg_catalog.pg_stats,pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_statistic_relid_att_inh_index
  test_pgsql_f 
 --------------
  
@@ -89,7 +89,7 @@ return res;
 end;
 $_$;
 select * from test_pgsql_dyn_f('foobar');
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_class_relname_nsp_index,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index
+LOG:  relations used: pg_catalog.pg_stats,pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_namespace,pg_catalog.pg_class_relname_nsp_index,pg_catalog.pg_statistic_relid_att_inh_index,pg_catalog.pg_attribute_relid_attnum_index
  test_pgsql_dyn_f 
 ------------------
  
@@ -171,14 +171,23 @@ LOG:  relations used: parted
 -- parent is not reported when the partition is queried directly
 \copy (select * from parted_1) to '/dev/null';
 LOG:  relations used: parted_1
+---------------
+-- NAME QUOTING
+---------------
+-- names are schema-qualified (except for public) and quoted where necessary
+create schema "Other Schema";
+create table "Other Schema".small(a int);
+create table "we,ird"(a int);
+\copy (select * from "Other Schema".small, public.small, "we,ird") to '/dev/null';
+LOG:  relations used: "Other Schema".small,small,"we,ird"
 ------
 -- GUC
 ------
 set pg_relusage.log_level = 'INFO';
 set pg_relusage.rel_kinds = 'r';
 \copy (select * from pg_stats limit 1) to '/dev/null';
-INFO:  relations used: pg_statistic,pg_class,pg_attribute,pg_namespace
+INFO:  relations used: pg_catalog.pg_statistic,pg_catalog.pg_class,pg_catalog.pg_attribute,pg_catalog.pg_namespace
 set pg_relusage.log_level = 'NOTICE';
 set pg_relusage.rel_kinds = 'v';
 \copy (select * from pg_stats limit 1) to '/dev/null';
-NOTICE:  relations used: pg_stats
+NOTICE:  relations used: pg_catalog.pg_stats

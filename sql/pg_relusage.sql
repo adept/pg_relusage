@@ -147,6 +147,15 @@ insert into parted values (1);
 -- parent is not reported when the partition is queried directly
 \copy (select * from parted_1) to '/dev/null';
 
+---------------
+-- NAME QUOTING
+---------------
+-- names are schema-qualified (except for public) and quoted where necessary
+create schema "Other Schema";
+create table "Other Schema".small(a int);
+create table "we,ird"(a int);
+\copy (select * from "Other Schema".small, public.small, "we,ird") to '/dev/null';
+
 ------
 -- GUC
 ------

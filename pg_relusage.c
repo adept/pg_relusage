@@ -23,6 +23,8 @@
 #include "parser/parsetree.h"
 #include "catalog/partition.h"
 #include "utils/lsyscache.h"
+#include "utils/builtins.h"
+#include "catalog/namespace.h"
 #include "utils/guc.h"
 #if PG_VERSION_NUM >= 90600
 #include "access/parallel.h"
@@ -275,9 +277,19 @@ pg_relusage_append_relation(StringInfo buf, Oid oid)
   reltup = (Form_pg_class) GETSTRUCT(tp);
 
   if (strchr(pg_relusage_rel_kinds, reltup->relkind)) {
+    // Temporary schemas are named pg_temp_N, where N varies between sessions,
+    // so we report all of them as pg_temp
+    char *nspname = isAnyTempNamespace(reltup->relnamespace)
+      ? "pg_temp" : get_namespace_name(reltup->relnamespace);
+
+    // Relations in "public" are reported without schema, to keep logs smaller
+    if (nspname && strcmp(nspname, "public") == 0)
+      nspname = NULL;
+
     if (buf->len > 0)
       appendStringInfoChar(buf, ',');
-    appendStringInfoString(buf, NameStr(reltup->relname));
+    // Schema-qualified, with quotes added where necessary
+    appendStringInfoString(buf, quote_qualified_identifier(nspname, NameStr(reltup->relname)));
   }
 
   ReleaseSysCache(tp);
