@@ -11,3 +11,4 @@ results/
 *.BAK
 *.zip
 .pgindent/
+regression.out

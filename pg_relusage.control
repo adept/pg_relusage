@@ -4,5 +4,5 @@
 # optional: the library has to be loaded with shared_preload_libraries,
 # session_preload_libraries or LOAD to do anything.
 comment = 'Logs relations used by SQL statements'
-default_version = '1.0.0'
+default_version = '1.0.1'
 relocatable = true

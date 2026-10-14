@@ -382,7 +382,7 @@ create extension pg_relusage;
 select extversion from pg_extension where extname = 'pg_relusage';
  extversion 
 ------------
- 1.0.0
+ 1.0.1
 (1 row)
 
 drop extension pg_relusage;
@@ -392,7 +392,7 @@ alter extension pg_relusage update;
 select extversion from pg_extension where extname = 'pg_relusage';
  extversion 
 ------------
- 1.0.0
+ 1.0.1
 (1 row)
 
 drop extension pg_relusage;

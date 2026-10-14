@@ -99,11 +99,16 @@ Extension provides the following settings (all of them can only be changed by su
 
   Note that statements in `DO` blocks and procedures invoked by `CALL` are top-level statements, as `DO` and `CALL` are not executed by the query executor themselves.
 * pg_relusage.log_level (defaults to `log`) is the level of the log messages: one of `debug5`, `debug4`, `debug3`, `debug2`, `debug1` (`debug` is an alias for `debug2`), `info`, `notice`, `warning` and `log`. Whether a message is written to the server log and/or sent to the client is decided by [log_min_messages and client_min_messages](https://www.postgresql.org/docs/current/runtime-config-logging.html#RUNTIME-CONFIG-SEVERITY-LEVELS), as for any other message. With default settings, `log` messages are written to the server log only, `info` and `notice` messages are sent to the client only (`info` messages are always sent to the client), and `warning` messages go to both. If the message would not be written or sent anywhere, pg_relusage skips all the work of collecting the relations, so it has no overhead in that case.
-* pg_relusage.rel_kinds (defaults to `'riSvmfp'`) which specifies which relation kinds will be reported. This is a list of one-letter codes used in the `relkind` field in the `pg_class` (full list could be seen [here](https://www.postgresql.org/docs/current/catalog-pg-class.html)).
+* pg_relusage.rel_kinds (defaults to `'riSvmfp'`) specifies which relation kinds will be reported. This is a list of one-letter codes used in the `relkind` field in the `pg_class` (full list could be seen [here](https://www.postgresql.org/docs/current/catalog-pg-class.html)). The default reports tables (`r`), indexes (`i`), sequences (`S`), views (`v`), materialized views (`m`), foreign tables (`f`) and partitioned tables (`p`). For example, use `'rSvmfp'` to stop reporting indexes.
 
 ## Limitations
 
 Supported PostgreSQL versions are 10 to 18.
+
+* Statements that are executed when no other statement is running are top-level statements, even if they are not issued by the client directly. This includes deferred constraint triggers fired at `COMMIT` (e.g. deferred foreign key checks), triggers fired by `COPY FROM`, and functions evaluated by the planner. They are reported as separate messages, also when `pg_relusage.nested_statements` is `top` or `fold`.
+* `INSERT` into a partitioned table reports only the partitioned table, as rows are routed to partitions during execution.
+* Partitions that are skipped only during execution (by pruning based on values that are not known at executor startup, e.g. from a subquery or the outer side of a join) are reported.
+* In the server log, messages from nested statements are followed by `CONTEXT` lines, which show the function and the statement within it that used the relations. This adds to the log volume; set [log_error_verbosity](https://www.postgresql.org/docs/current/runtime-config-logging.html#GUC-LOG-ERROR-VERBOSITY) to `terse` to omit them (this affects all messages).
 
 ## Development and testing
 

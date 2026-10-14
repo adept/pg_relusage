@@ -14,7 +14,7 @@ image="pg_relusage-test:${ver}"
 
 build_opts=()
 [ -n "${REBUILD:-}" ] && build_opts=(--pull --no-cache)
-docker build --quiet "${build_opts[@]}" --build-arg PGVERSION="${ver}" -t "${image}" test/ >/dev/null
+docker build --quiet ${build_opts[@]+"${build_opts[@]}"} --build-arg PGVERSION="${ver}" -t "${image}" test/ >/dev/null
 
 mkdir -p results
 
