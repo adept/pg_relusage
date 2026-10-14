@@ -287,6 +287,20 @@ select truncate_audit();
 reset pg_relusage.nested_statements;
 select truncate_audit();
 
+------------
+-- EXTENSION
+------------
+-- CREATE EXTENSION is optional, as the extension does not define any objects
+create extension pg_relusage;
+select extversion from pg_extension where extname = 'pg_relusage';
+drop extension pg_relusage;
+
+-- upgrade from 0.0.1
+create extension pg_relusage version '0.0.1';
+alter extension pg_relusage update;
+select extversion from pg_extension where extname = 'pg_relusage';
+drop extension pg_relusage;
+
 ------
 -- GUC
 ------

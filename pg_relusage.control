@@ -1,4 +1,8 @@
 # pg_relusage extension
-comment = 'Log all the queries that reference a particular column'
-default_version = '0.0.1'
-module_pathname = '$libdir/pg_relusage'
+#
+# The extension does not define any SQL objects, so CREATE EXTENSION is
+# optional: the library has to be loaded with shared_preload_libraries,
+# session_preload_libraries or LOAD to do anything.
+comment = 'Logs relations used by SQL statements'
+default_version = '1.0.0'
+relocatable = true

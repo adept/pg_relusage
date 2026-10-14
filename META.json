@@ -1,16 +1,16 @@
 {
    "name": "pg_relusage",
-   "abstract": "An extension to log all the relations used in SQL statements and functions",
-   "version": "0.0.1",
+   "abstract": "Logs relations used by SQL statements",
+   "version": "1.0.0",
    "maintainer": "Dmitry Astapov <dastapov@gmail.com>",
    "license": "postgresql",
    "release_status": "stable",
    "provides": {
       "pg_relusage": {
-         "abstract": "An extension to log all the relations used in SQL statements and functions",
+         "abstract": "Logs relations used by SQL statements",
          "file": "pg_relusage.c",
          "docfile": "README.md",
-         "version": "0.0.1"
+         "version": "1.0.0"
       }
    },
    "resources": {
@@ -18,22 +18,21 @@
          "web": "https://github.com/adept/pg_relusage/issues"
       },
       "repository": {
-        "url":  "https://github.com/adept/pg_relusage.git",
-        "web":  "https://github.com/adept/pg_relusage",
-        "type": "git"
+         "url": "https://github.com/adept/pg_relusage.git",
+         "web": "https://github.com/adept/pg_relusage",
+         "type": "git"
       }
    },
    "prereqs": {
-       "runtime": {
-           "requires": {
-               "PostgreSQL": ">= 10.0.0"
-           }
-       }
+      "runtime": {
+         "requires": {
+            "PostgreSQL": ">= 10.0.0"
+         }
+      }
    },
-   "generated_by": "Dmitry Astapov",
    "meta-spec": {
       "version": "1.0.0",
-      "url": "http://pgxn.org/meta/spec.txt"
+      "url": "https://pgxn.org/meta/spec.txt"
    },
    "tags": [
       "logging",

@@ -1,21 +1,19 @@
 EXTENSION    = pg_relusage
 EXTVERSION   = $(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
+MODULES      = pg_relusage
+PGFILEDESC   = "pg_relusage - log relations used by SQL statements"
+DATA         = $(wildcard $(EXTENSION)--*.sql)
 TESTS        = $(wildcard sql/*.sql)
 REGRESS      = $(patsubst sql/%.sql,%,$(TESTS))
-# REGRESS_OPTS = --inputdir=test
-MODULES      = pg_relusage
-PG_CONFIG    ?= pg_config
+PG_CONFIG   ?= pg_config
 
-all:
-
-release-zip: all
-	git archive --format zip --prefix=pg_relusage-$(EXTVERSION)/ --output ./pg_relusage-$(EXTVERSION).zip HEAD
-	unzip ./pg_relusage-$(EXTVERSION).zip
-	rm ./pg_relusage-$(EXTVERSION).zip
-	zip -r ./pg_relusage-$(EXTVERSION).zip ./pg_relusage-$(EXTVERSION)/
-	rm ./pg_relusage-$(EXTVERSION) -rf
-
-
-DATA = $(wildcard *--*.sql)
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# Defined after including PGXS, so that "all" from PGXS remains the default target
+
+# Source archive for PGXN, built from the committed HEAD
+release-zip:
+	git archive --format zip --prefix=$(EXTENSION)-$(EXTVERSION)/ --output $(EXTENSION)-$(EXTVERSION).zip HEAD
+
+.PHONY: release-zip

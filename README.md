@@ -21,6 +21,8 @@ Extension uses standard PGXS build infrastructure and (provided that `pg_config`
 
 After installation, extension has to be either loaded into a single client process via [load](https://www.postgresql.org/docs/current/sql-load.html) statement or enabled for all sessions globally via [shared_preload_libraries](https://postgresqlco.nf/doc/en/param/shared_preload_libraries/) configuration parameter.
 
+The extension does not define any SQL objects, so `CREATE EXTENSION pg_relusage` is optional: it only records the extension in `pg_extension` (which could be useful to keep track of where it is installed), and does not load or enable anything by itself.
+
 Once extension is loaded, each SQL statement will emit one extra log message which will list all the referenced relations, as a comma-separated list of schema-qualified names. Relations in the `public` schema are reported without the schema name, to keep the logs smaller. Names are quoted the same way as in SQL when necessary (e.g. `"My Schema"."we,ird"`), and relations in temporary schemas are reported as `pg_temp.<name>`.
 
 For example, given
