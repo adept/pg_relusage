@@ -63,6 +63,22 @@ System catalogs (relations in `pg_catalog`, `pg_toast` and `information_schema`)
 
 If the plan contains a node type that pg_relusage does not recognize (e.g. one introduced by a newer PostgreSQL version), it falls back to reporting all the relations that the plan depends on, without eliminating anything.
 
+### Correlating log messages with clients and statements
+
+Log messages do not include the text of the statement, to keep the log small. To find out which client or statement used the relations, include the relevant information in [log_line_prefix](https://www.postgresql.org/docs/current/runtime-config-logging.html#GUC-LOG-LINE-PREFIX), for example:
+
+```
+log_line_prefix = '%m [%p] %q%u@%d app=%a client=%h '
+```
+
+which would produce messages like
+
+```
+2025-01-01 12:00:00.000 UTC [1234] app_user@app_db app=billing client=10.0.0.1 LOG:  relations used: vw_items,items,owners
+```
+
+On PostgreSQL 14 and later, you can also add the query identifier (`%Q`, requires [compute_query_id](https://www.postgresql.org/docs/current/runtime-config-statistics.html#GUC-COMPUTE-QUERY-ID) to be enabled, which [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) does automatically). It can be used to look up the normalized text of the statement in `pg_stat_statements`. Nested statements are logged with the query identifier of the top-level statement.
+
 ## Configuration
 
 Extension provides the following settings (all of them can only be changed by superusers):
