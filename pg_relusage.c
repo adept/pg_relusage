@@ -15,7 +15,9 @@
 #include "postgres.h"
 #include "executor/executor.h"
 
-#include "utils/lsyscache.h"
+#include "access/htup_details.h"
+#include "utils/syscache.h"
+#include "catalog/pg_class.h"
 #include "nodes/pg_list.h"
 #include "utils/guc.h"
 #if PG_VERSION_NUM >= 90600
@@ -110,35 +112,41 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
   Oid oid;
   StringInfoData buf;
   bool buf_empty=true;
-  char kind;
     
   initStringInfo(&buf);
 
   foreach(lst, queryDesc -> plannedstmt -> relationOids) {
     bool seen = false;
+    HeapTuple tp;
+    Form_pg_class reltup;
     oid = lfirst_oid(lst);
-    kind = get_rel_relkind(oid);
 
-    // Exclude things with unknown relkind, and ignore indices and TOAST tables
-    if (!kind || !strchr(pg_relusage_rel_kinds, kind) ) continue;
-    
     // Oid list is not deduplicated so we check if the same oid was mentioned before
     foreach(lst2, queryDesc -> plannedstmt -> relationOids) {
       if(lst2 == lst)
         break;
-      if(oid == lfirst_oid(lst2)) 
+      if(oid == lfirst_oid(lst2))
         seen = true;
     }
-    
-    if (!seen) {
+    if (seen) continue;
+
+    // Fetch relkind and relname from a single catalog lookup, so that they are
+    // consistent with each other. Relation could have been dropped concurrently.
+    tp = SearchSysCache1(RELOID, ObjectIdGetDatum(oid));
+    if (!HeapTupleIsValid(tp)) continue;
+    reltup = (Form_pg_class) GETSTRUCT(tp);
+
+    // Only report relations of the configured kinds
+    if (strchr(pg_relusage_rel_kinds, reltup->relkind)) {
       if (buf_empty) {
         buf_empty=false;
       } else {
         appendStringInfoChar(&buf, ',');
       };
-      appendStringInfoString(&buf, get_rel_name(oid));
+      appendStringInfoString(&buf, NameStr(reltup->relname));
     }
-    
+
+    ReleaseSysCache(tp);
   };
 
   if (!buf_empty) {
