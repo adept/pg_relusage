@@ -1,9 +1,9 @@
 /*-------------------------------------------------------------------------
  *
- * pg_relusage is a PostgreSQL extension which allows to log relations that were
+ * pg_relusage is a PostgreSQL extension which allows one to log relations that were
  * used by the current statement.
  *
- * This code is based on Bruce Momijan lectures and auto_explain.
+ * This code is based on Bruce Momjian lectures and auto_explain.
  *
  * This program is open source, licensed under the PostgreSQL license.
  * For license terms, see the LICENSE file.
@@ -95,7 +95,6 @@ static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
 void		_PG_init(void);
-void		_PG_fini(void);
 
 static void pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags);
 #if PG_VERSION_NUM >= 180000
@@ -109,6 +108,25 @@ static void pg_relusage_ExecutorFinish(QueryDesc *queryDesc);
 static void pg_relusage_ExecutorEnd(QueryDesc *queryDesc);
 static void pg_relusage_xact_callback(XactEvent event, void *arg);
 static bool pg_relusage_plan_walker(PlanState *ps, void *context);
+static bool pg_relusage_check_rel_kinds(char **newval, void **extra, GucSource source);
+
+// Valid values of pg_class.relkind
+#define PG_RELUSAGE_VALID_REL_KINDS "riStvmcfpI"
+
+static bool
+pg_relusage_check_rel_kinds(char **newval, void **extra, GucSource source)
+{
+  const char *c;
+
+  for (c = *newval; *c; c++) {
+    if (!strchr(PG_RELUSAGE_VALID_REL_KINDS, *c)) {
+      GUC_check_errdetail("Unknown relation kind '%c'. Valid relation kinds are: %s.",
+                          *c, PG_RELUSAGE_VALID_REL_KINDS);
+      return false;
+    }
+  }
+  return true;
+}
 
 void
 _PG_init(void)
@@ -126,13 +144,13 @@ _PG_init(void)
                            NULL);
 
   DefineCustomStringVariable("pg_relusage.rel_kinds",
-                             "rel_kinds that pg_relusage will report",
-                             "pg_class.relkind of the relation will be checked again this string, and if there is a match, relation will be reported",
+                             "Relation kinds that pg_relusage will report.",
+                             "String of pg_class.relkind codes. Relation is reported if its relkind is in this string.",
                              &pg_relusage_rel_kinds,
                              "riSvmfp",
                              PGC_SUSET,
                              0,
-                             NULL,
+                             pg_relusage_check_rel_kinds,
                              NULL,
                              NULL);
 
@@ -161,7 +179,11 @@ _PG_init(void)
                            NULL,
                            NULL);
 
+#if PG_VERSION_NUM >= 150000
+  MarkGUCPrefixReserved("pg_relusage");
+#else
   EmitWarningsOnPlaceholders("pg_relusage");
+#endif
 
   prev_ExecutorStart = ExecutorStart_hook;
   ExecutorStart_hook = pg_relusage_ExecutorStart;
@@ -172,16 +194,6 @@ _PG_init(void)
   prev_ExecutorEnd = ExecutorEnd_hook;
   ExecutorEnd_hook = pg_relusage_ExecutorEnd;
   RegisterXactCallback(pg_relusage_xact_callback, NULL);
-}
-
-void
-_PG_fini(void)
-{
-  ExecutorStart_hook = prev_ExecutorStart;
-  ExecutorRun_hook = prev_ExecutorRun;
-  ExecutorFinish_hook = prev_ExecutorFinish;
-  ExecutorEnd_hook = prev_ExecutorEnd;
-  UnregisterXactCallback(pg_relusage_xact_callback, NULL);
 }
 
 // State for the walk over the plan tree

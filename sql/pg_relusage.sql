@@ -252,6 +252,9 @@ reset max_parallel_workers_per_gather;
 ------
 -- GUC
 ------
+-- unknown relation kinds are rejected
+set pg_relusage.rel_kinds = 'rx';
+
 set pg_relusage.log_level = 'INFO';
 set pg_relusage.rel_kinds = 'r';
 \copy (select * from vw_items limit 1) to '/dev/null';
