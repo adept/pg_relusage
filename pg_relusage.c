@@ -92,6 +92,7 @@ static QueryDesc *current_top = NULL;
 typedef struct
 {
 	QueryDesc  *queryDesc;
+	SubTransactionId subxid;	/* subtransaction the statement started in */
 	List	   *oids;			/* relations seen so far (reported or not) */
 	StringInfoData names;		/* formatted names of reported relations */
 } pg_relusage_pending;
@@ -117,6 +118,8 @@ static void pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection directio
 static void pg_relusage_ExecutorFinish(QueryDesc *queryDesc);
 static void pg_relusage_ExecutorEnd(QueryDesc *queryDesc);
 static void pg_relusage_xact_callback(XactEvent event, void *arg);
+static void pg_relusage_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
+										 SubTransactionId parentSubid, void *arg);
 
 #if PG_VERSION_NUM >= 140000
 #define PG_RELUSAGE_UTILITY_PARAMS PlannedStmt *pstmt, const char *queryString, \
@@ -231,6 +234,7 @@ _PG_init(void)
 	prev_ProcessUtility = ProcessUtility_hook;
 	ProcessUtility_hook = pg_relusage_ProcessUtility;
 	RegisterXactCallback(pg_relusage_xact_callback, NULL);
+	RegisterSubXactCallback(pg_relusage_subxact_callback, NULL);
 }
 
 /* State for the walk over the plan tree */
@@ -561,13 +565,28 @@ pg_relusage_find_pending(QueryDesc *queryDesc)
 	return NULL;
 }
 
+static void pg_relusage_flush_pending(pg_relusage_pending *entry);
+
 static pg_relusage_pending *
 pg_relusage_new_pending(QueryDesc *queryDesc)
 {
-	MemoryContext oldcxt = MemoryContextSwitchTo(TopMemoryContext);
-	pg_relusage_pending *entry = palloc0(sizeof(pg_relusage_pending));
+	MemoryContext oldcxt;
+	pg_relusage_pending *entry = pg_relusage_find_pending(queryDesc);
 
+	/*
+	 * A statement is started only once, so an entry for the same QueryDesc
+	 * must be left over from a statement that never finished, and whose
+	 * QueryDesc was freed and its memory reused. Should not happen, as such
+	 * entries are flushed when their subtransaction aborts, but log it
+	 * separately just in case.
+	 */
+	if (entry)
+		pg_relusage_flush_pending(entry);
+
+	oldcxt = MemoryContextSwitchTo(TopMemoryContext);
+	entry = palloc0(sizeof(pg_relusage_pending));
 	entry->queryDesc = queryDesc;
+	entry->subxid = GetCurrentSubTransactionId();
 	initStringInfo(&entry->names);
 	pending = lappend(pending, entry);
 	MemoryContextSwitchTo(oldcxt);
@@ -870,6 +889,54 @@ pg_relusage_xact_callback(XactEvent event, void *arg)
 		case XACT_EVENT_PREPARE:
 			while (pending != NIL)
 				pg_relusage_flush_pending((pg_relusage_pending *) linitial(pending));
+			break;
+		default:
+			break;
+	}
+}
+
+/*
+ * Statements that failed inside a subtransaction (e.g. in a PL/pgSQL block
+ * with an exception handler) never reach ExecutorEnd, and their QueryDescs are
+ * freed. Log relations they used when the subtransaction aborts, and pass
+ * entries of the committed subtransaction to its parent.
+ */
+static void
+pg_relusage_subxact_callback(SubXactEvent event, SubTransactionId mySubid,
+							 SubTransactionId parentSubid, void *arg)
+{
+	ListCell   *lst;
+
+	switch (event)
+	{
+		case SUBXACT_EVENT_ABORT_SUB:
+			for (;;)
+			{
+				pg_relusage_pending *found = NULL;
+
+				foreach(lst, pending)
+				{
+					pg_relusage_pending *entry = (pg_relusage_pending *) lfirst(lst);
+
+					if (entry->subxid == mySubid)
+					{
+						found = entry;
+						break;
+					}
+				}
+				if (!found)
+					break;
+				pg_relusage_flush_pending(found);
+			}
+			break;
+		case SUBXACT_EVENT_COMMIT_SUB:
+			foreach(lst, pending)
+			{
+				pg_relusage_pending *entry = (pg_relusage_pending *) lfirst(lst);
+
+				if (entry->subxid == mySubid)
+					entry->subxid = parentSubid;
+			}
 			break;
 		default:
 			break;

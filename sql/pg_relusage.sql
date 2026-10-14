@@ -190,6 +190,14 @@ end;
 $_$;
 create trigger test_audit after insert on test for each row execute procedure audit_trg();
 
+create function count_audit() returns bigint
+language plpgsql
+as $_$
+begin
+  return (select count(*) from audit);
+end;
+$_$;
+
 create function fail_after_read() returns bigint
 language plpgsql
 as $_$
@@ -216,9 +224,23 @@ set pg_relusage.nested_statements = 'fold';
 insert into test(t) values ('nested');
 \copy (select count_items() from vw_items) to '/dev/null';
 
--- fold: statement that failed still reports relations used before the failure, at
--- the end of transaction (error is caught, so that the order of the output is stable)
+-- fold: statement that failed still reports relations used before the failure, when
+-- its subtransaction is aborted (error is caught, so that the order of the output is stable)
 do $_$ begin perform fail_after_read(); exception when others then null; end $_$;
+
+-- fold: failed statements are not mixed up with the statements that follow them
+do $_$
+begin
+  for i in 1..3 loop
+    begin
+      perform fail_after_read();
+    exception when others then
+      null;
+    end;
+    perform count_audit();
+  end loop;
+end;
+$_$;
 
 reset pg_relusage.nested_statements;
 drop trigger test_audit on test;
