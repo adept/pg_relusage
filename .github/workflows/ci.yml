@@ -1,22 +1,28 @@
 name: CI
 on:
   push:
-    branches: ['*']
+    branches: ['**']
   pull_request:
-    branches: ['*']
   schedule:
     - cron:  '0 12 5 * *' # Monthly at noon on the fifth
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        pg: [17, 16, 15, 14, 13, 12, 11, 10]
+        pg: [18, 17, 16, 15, 14, 13, 12, 11, 10]
     name: 🐘 PostgreSQL ${{ matrix.pg }}
     runs-on: ubuntu-latest
     container: pgxn/pgxn-tools
     steps:
       - run: pg-start ${{ matrix.pg }}
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
       - run: |
           cp expected/pg_relusage_${{ matrix.pg }}.out expected/pg_relusage.out
           pg-build-test
+  pgindent:
+    name: pgindent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: tools/pgindent.sh --check

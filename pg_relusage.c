@@ -33,6 +33,10 @@
 #include "utils/memutils.h"
 #include "access/parallel.h"
 
+#if PG_VERSION_NUM < 100000
+#error "pg_relusage requires PostgreSQL 10 or later"
+#endif
+
 PG_MODULE_MAGIC;
 
 static int	pg_relusage_log_level = LOG;
