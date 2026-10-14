@@ -32,6 +32,8 @@
 #include "access/xact.h"
 #include "utils/memutils.h"
 #include "access/parallel.h"
+#include "tcop/utility.h"
+#include "nodes/parsenodes.h"
 
 #if PG_VERSION_NUM < 100000
 #error "pg_relusage requires PostgreSQL 10 or later"
@@ -115,6 +117,29 @@ static void pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection directio
 static void pg_relusage_ExecutorFinish(QueryDesc *queryDesc);
 static void pg_relusage_ExecutorEnd(QueryDesc *queryDesc);
 static void pg_relusage_xact_callback(XactEvent event, void *arg);
+
+#if PG_VERSION_NUM >= 140000
+#define PG_RELUSAGE_UTILITY_PARAMS PlannedStmt *pstmt, const char *queryString, \
+	bool readOnlyTree, ProcessUtilityContext context, ParamListInfo params, \
+	QueryEnvironment *queryEnv, DestReceiver *dest, QueryCompletion *qc
+#define PG_RELUSAGE_UTILITY_ARGS pstmt, queryString, readOnlyTree, context, \
+	params, queryEnv, dest, qc
+#elif PG_VERSION_NUM >= 130000
+#define PG_RELUSAGE_UTILITY_PARAMS PlannedStmt *pstmt, const char *queryString, \
+	ProcessUtilityContext context, ParamListInfo params, \
+	QueryEnvironment *queryEnv, DestReceiver *dest, QueryCompletion *qc
+#define PG_RELUSAGE_UTILITY_ARGS pstmt, queryString, context, params, \
+	queryEnv, dest, qc
+#else
+#define PG_RELUSAGE_UTILITY_PARAMS PlannedStmt *pstmt, const char *queryString, \
+	ProcessUtilityContext context, ParamListInfo params, \
+	QueryEnvironment *queryEnv, DestReceiver *dest, char *completionTag
+#define PG_RELUSAGE_UTILITY_ARGS pstmt, queryString, context, params, \
+	queryEnv, dest, completionTag
+#endif
+
+static ProcessUtility_hook_type prev_ProcessUtility = NULL;
+static void pg_relusage_ProcessUtility(PG_RELUSAGE_UTILITY_PARAMS);
 static bool pg_relusage_plan_walker(PlanState *ps, void *context);
 static bool pg_relusage_check_rel_kinds(char **newval, void **extra, GucSource source);
 
@@ -203,6 +228,8 @@ _PG_init(void)
 	ExecutorFinish_hook = pg_relusage_ExecutorFinish;
 	prev_ExecutorEnd = ExecutorEnd_hook;
 	ExecutorEnd_hook = pg_relusage_ExecutorEnd;
+	prev_ProcessUtility = ProcessUtility_hook;
+	ProcessUtility_hook = pg_relusage_ProcessUtility;
 	RegisterXactCallback(pg_relusage_xact_callback, NULL);
 }
 
@@ -590,42 +617,47 @@ pg_relusage_flush_pending(pg_relusage_pending *entry)
 	pfree(entry);
 }
 
-static void
-pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
+/*
+ * Should relations used by the statement be reported? Checks everything that
+ * is cheap to check, to skip all the work if there is nothing to report, or
+ * the message would be discarded. Parallel workers execute parts of the plan
+ * of the leader, which reports relations for the whole plan.
+ */
+static bool
+pg_relusage_should_report(void)
 {
-	List	   *oids;
+	if (!pg_relusage_enabled
+		|| IsParallelWorker()
+		|| pg_relusage_rel_kinds[0] == '\0'
+		|| !pg_relusage_level_is_interesting(pg_relusage_log_level))
+		return false;
+
+	if (pg_relusage_nested_statements == PG_RELUSAGE_NESTED_TOP && nesting_level > 0)
+		return false;
+
+	return true;
+}
+
+/*
+ * Report relations used by the statement. In "fold" mode, relations used by
+ * nested statements are added to the pending entry of the top-level statement,
+ * and top-level statements executed by the executor (queryDesc is not NULL)
+ * get a pending entry of their own, which is logged when they finish.
+ */
+static void
+pg_relusage_report(List *oids, QueryDesc *queryDesc)
+{
 	StringInfoData buf;
 	ListCell   *lst;
 
-	if (prev_ExecutorStart)
-		prev_ExecutorStart(queryDesc, eflags);
-	else
-		standard_ExecutorStart(queryDesc, eflags);
-
-	/*
-	 * Log only after the executor started successfully (e.g. permission
-	 * checks passed). EXPLAIN without ANALYZE does not execute the query, so
-	 * nothing is used. Parallel workers execute parts of the plan of the
-	 * leader, which reports relations for the whole plan. Skip all the work
-	 * if there is nothing to report, or the message would be discarded.
-	 */
-	if (!pg_relusage_enabled
-		|| IsParallelWorker()
-		|| (eflags & EXEC_FLAG_EXPLAIN_ONLY)
-		|| pg_relusage_rel_kinds[0] == '\0'
-		|| !pg_relusage_level_is_interesting(pg_relusage_log_level))
-		return;
-
-	if (pg_relusage_nested_statements == PG_RELUSAGE_NESTED_TOP && nesting_level > 0)
-		return;
-
-	oids = pg_relusage_collect_relations(queryDesc);
-
 	if (pg_relusage_nested_statements == PG_RELUSAGE_NESTED_FOLD)
 	{
-		pg_relusage_pending *entry = (nesting_level == 0)
-			? pg_relusage_new_pending(queryDesc)
-			: pg_relusage_find_pending(current_top);
+		pg_relusage_pending *entry = NULL;
+
+		if (nesting_level > 0)
+			entry = pg_relusage_find_pending(current_top);
+		else if (queryDesc)
+			entry = pg_relusage_new_pending(queryDesc);
 
 		/*
 		 * Nested statement could have no pending top-level entry (e.g. if the
@@ -635,7 +667,6 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
 		if (entry)
 		{
 			pg_relusage_add_to_pending(entry, oids);
-			list_free(oids);
 			return;
 		}
 	}
@@ -645,7 +676,100 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
 		pg_relusage_append_relation(&buf, lfirst_oid(lst));
 	pg_relusage_emit(buf.data);
 	pfree(buf.data);
+}
+
+static void
+pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
+{
+	List	   *oids;
+
+	if (prev_ExecutorStart)
+		prev_ExecutorStart(queryDesc, eflags);
+	else
+		standard_ExecutorStart(queryDesc, eflags);
+
+	/*
+	 * Log only after the executor started successfully (e.g. permission
+	 * checks passed). EXPLAIN without ANALYZE does not execute the query, so
+	 * nothing is used.
+	 */
+	if ((eflags & EXEC_FLAG_EXPLAIN_ONLY) || !pg_relusage_should_report())
+		return;
+
+	oids = pg_relusage_collect_relations(queryDesc);
+	pg_relusage_report(oids, queryDesc);
 	list_free(oids);
+}
+
+/*
+ * Relations used by utility statements that access data without going through
+ * the executor: COPY to or from a table, TRUNCATE, LOCK and REFRESH
+ * MATERIALIZED VIEW. Maintenance (VACUUM, CLUSTER etc.) and DDL statements are
+ * not reported, as they are typically run for all relations by scripts and
+ * migrations, which would make every relation look used. Utility statements
+ * that execute queries (e.g. COPY (query) TO, CREATE TABLE AS, EXPLAIN
+ * ANALYZE) are reported by the executor hooks.
+ */
+static List *
+pg_relusage_utility_relations(Node *parsetree)
+{
+	List	   *rangevars = NIL;
+	List	   *oids = NIL;
+	ListCell   *lst;
+
+	switch (nodeTag(parsetree))
+	{
+		case T_CopyStmt:
+			if (((CopyStmt *) parsetree)->relation)
+				rangevars = list_make1(((CopyStmt *) parsetree)->relation);
+			break;
+		case T_TruncateStmt:
+			rangevars = list_copy(((TruncateStmt *) parsetree)->relations);
+			break;
+		case T_LockStmt:
+			rangevars = list_copy(((LockStmt *) parsetree)->relations);
+			break;
+		case T_RefreshMatViewStmt:
+			rangevars = list_make1(((RefreshMatViewStmt *) parsetree)->relation);
+			break;
+		default:
+			break;
+	}
+
+	foreach(lst, rangevars)
+	{
+		Oid			oid = RangeVarGetRelid((RangeVar *) lfirst(lst), NoLock, true);
+
+		if (OidIsValid(oid))
+			oids = list_append_unique_oid(oids, oid);
+	}
+	list_free(rangevars);
+	return oids;
+}
+
+static void
+pg_relusage_ProcessUtility(PG_RELUSAGE_UTILITY_PARAMS)
+{
+	List	   *oids = NIL;
+
+	/*
+	 * Resolve relation names before executing the statement, as execution
+	 * could modify the parse tree
+	 */
+	if (pg_relusage_should_report())
+		oids = pg_relusage_utility_relations(pstmt->utilityStmt);
+
+	if (prev_ProcessUtility)
+		prev_ProcessUtility(PG_RELUSAGE_UTILITY_ARGS);
+	else
+		standard_ProcessUtility(PG_RELUSAGE_UTILITY_ARGS);
+
+	/* Log only after the statement succeeded */
+	if (oids != NIL)
+	{
+		pg_relusage_report(oids, NULL);
+		list_free(oids);
+	}
 }
 
 /*

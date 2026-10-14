@@ -249,6 +249,44 @@ reset enable_seqscan;
 reset enable_bitmapscan;
 reset max_parallel_workers_per_gather;
 
+---------------------
+-- UTILITY STATEMENTS
+---------------------
+-- utility statements that access data are reported
+\copy test to '/dev/null'
+\copy small from '/dev/null'
+truncate audit, small;
+begin;
+lock table test in share mode;
+commit;
+
+-- materialized view is reported by REFRESH, in addition to relations used by its query
+create materialized view mv_items as select * from vw_items;
+refresh materialized view mv_items;
+
+-- maintenance and DDL statements are not reported
+vacuum test;
+analyze test;
+create index test_t on test(t);
+
+-- statements that fail are not reported
+truncate test, small_nonexistent;
+
+-- nested utility statements follow pg_relusage.nested_statements
+create function truncate_audit() returns void
+language plpgsql
+as $_$
+begin
+  truncate audit;
+end;
+$_$;
+set pg_relusage.nested_statements = 'top';
+select truncate_audit();
+set pg_relusage.nested_statements = 'fold';
+select truncate_audit();
+reset pg_relusage.nested_statements;
+select truncate_audit();
+
 ------
 -- GUC
 ------

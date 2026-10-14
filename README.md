@@ -59,6 +59,8 @@ In addition, the following are reported:
 * views referenced by the statement, together with the relations they expand to;
 * relations referenced by name through a `regclass` constant, such as sequences used via `nextval('some_seq')` (including `serial`/`identity`-style column defaults: `insert into test ...` reports `test,test_id_seq`), `'some_table'::regclass` literals, and functions taking a `regclass` argument, such as `pg_relation_size('some_table')`. Such statements would break if the relation was dropped, so they are reported as users of it, even though its contents are never read.
 
+Utility statements that access data without running a query are reported as well: `COPY` to or from a table, `TRUNCATE`, `LOCK` and `REFRESH MATERIALIZED VIEW` (which also reports the relations used by the query of the materialized view, in a separate message). Utility statements that run a query, such as `COPY (select ...) TO`, `CREATE TABLE AS` or `EXPLAIN ANALYZE`, report the relations used by that query. Maintenance (`VACUUM`, `ANALYZE`, `CLUSTER`, `REINDEX`) and DDL statements (`ALTER TABLE`, `CREATE INDEX`, `GRANT`, etc.) are not reported: they are typically run for all relations by maintenance scripts and migrations, which would make every relation look used.
+
 System catalogs (relations in `pg_catalog`, `pg_toast` and `information_schema`) are never reported. They cannot be dropped anyway, and catalog queries issued by tools (psql, GUI clients, ORMs) would otherwise flood the log.
 
 If the plan contains a node type that pg_relusage does not recognize (e.g. one introduced by a newer PostgreSQL version), it falls back to reporting all the relations that the plan depends on, without eliminating anything.
