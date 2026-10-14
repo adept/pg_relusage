@@ -19,11 +19,15 @@ Extension uses standard PGXS build infrastructure and (provided that `pg_config`
 
 ## Usage
 
-After installation, extension has to be either loaded into a single client process via [load](https://www.postgresql.org/docs/current/sql-load.html) statement or enabled for all sessions globally via [shared_preload_libraries](https://postgresqlco.nf/doc/en/param/shared_preload_libraries/) configuration parameter.
+After installation, the library has to be loaded into the server processes, in one of the following ways:
+
+* [shared_preload_libraries](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-SHARED-PRELOAD-LIBRARIES) in `postgresql.conf` enables it for all sessions in all databases. Changing it requires a server restart.
+* [session_preload_libraries](https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-SESSION-PRELOAD-LIBRARIES) loads it at the start of each new session, without a restart. It can be set for all sessions in `postgresql.conf`, or only for some databases or roles, e.g. `ALTER DATABASE app SET session_preload_libraries = 'pg_relusage'`. This requires superuser.
+* [LOAD](https://www.postgresql.org/docs/current/sql-load.html) `'pg_relusage'` loads it into the current session only. This requires superuser, unless the library is installed into `$libdir/plugins/` (then use `LOAD '$libdir/plugins/pg_relusage'`).
 
 The extension does not define any SQL objects, so `CREATE EXTENSION pg_relusage` is optional: it only records the extension in `pg_extension` (which could be useful to keep track of where it is installed), and does not load or enable anything by itself.
 
-Once extension is loaded, each SQL statement will emit one extra log message which will list all the referenced relations, as a comma-separated list of schema-qualified names. Relations in the `public` schema are reported without the schema name, to keep the logs smaller. Names are quoted the same way as in SQL when necessary (e.g. `"My Schema"."we,ird"`), and relations in temporary schemas are reported as `pg_temp.<name>`.
+Once the library is loaded, each SQL statement that uses any relations will emit a log message which will list them, as a comma-separated list of schema-qualified names. Relations in the `public` schema are reported without the schema name, to keep the logs smaller. Names are quoted the same way as in SQL when necessary (e.g. `"My Schema"."we,ird"`), and relations in temporary schemas are reported as `pg_temp.<name>`.
 
 For example, given
 
@@ -94,7 +98,7 @@ Extension provides the following settings (all of them can only be changed by su
   * `fold`: relations used by nested statements are reported together with the top-level statement, in one log message emitted when the top-level statement finishes (`relations used: test,test_id_seq,audit` in the example above). This keeps the log volume close to `top` (e.g. a function that executes a query in a loop million times produces just one message), but has the same processing overhead as `all`. If the statement fails, relations it used before the failure are reported at the end of the transaction.
 
   Note that statements in `DO` blocks and procedures invoked by `CALL` are top-level statements, as `DO` and `CALL` are not executed by the query executor themselves.
-* pg_relusage.log_level (defaults to `LOG`), with the obvious meaning and the same set of values that similar configuration items (like `client_min_messages` support)
+* pg_relusage.log_level (defaults to `log`) is the level of the log messages: one of `debug5`, `debug4`, `debug3`, `debug2`, `debug1` (`debug` is an alias for `debug2`), `info`, `notice`, `warning` and `log`. Whether a message is written to the server log and/or sent to the client is decided by [log_min_messages and client_min_messages](https://www.postgresql.org/docs/current/runtime-config-logging.html#RUNTIME-CONFIG-SEVERITY-LEVELS), as for any other message. With default settings, `log` messages are written to the server log only, `info` and `notice` messages are sent to the client only (`info` messages are always sent to the client), and `warning` messages go to both. If the message would not be written or sent anywhere, pg_relusage skips all the work of collecting the relations, so it has no overhead in that case.
 * pg_relusage.rel_kinds (defaults to `'riSvmfp'`) which specifies which relation kinds will be reported. This is a list of one-letter codes used in the `relkind` field in the `pg_class` (full list could be seen [here](https://www.postgresql.org/docs/current/catalog-pg-class.html)).
 
 ## Limitations
