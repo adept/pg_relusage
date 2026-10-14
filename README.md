@@ -88,3 +88,5 @@ In addition to `make install && make installcheck`, you can run `./all_tests.sh`
 Docker images with PostgreSQL preinstalled (`pg_relusage-test:<version>`, see `test/Dockerfile`) are built on the first run and reused afterwards. Use `REBUILD=1 ./run_test.sh 11` to rebuild the image and pick up new PostgreSQL minor releases.
 
 Actual test output is saved to `results/pg_relusage_<version>.out`. If changes in the output are expected, use `ACCEPT=1 ./run_test.sh 11` (or `ACCEPT=1 ./all_tests.sh`) to update the expected output, and review the changes with `git diff expected/`.
+
+C code follows the PostgreSQL coding style. Run `tools/pgindent.sh` to reformat it with PostgreSQL's pgindent (in the same Docker image used for tests), or `tools/pgindent.sh --check` to check it without making changes.

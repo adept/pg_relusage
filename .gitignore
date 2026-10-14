@@ -10,3 +10,4 @@ results/
 *.diffs
 *.BAK
 *.zip
+.pgindent/
