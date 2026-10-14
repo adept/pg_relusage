@@ -92,6 +92,17 @@ explain (costs off) select * from test;
 -- EXPLAIN ANALYZE executes the query, so relations are reported
 explain (analyze, costs off, timing off, summary off, buffers off) select * from test;
 
+--------------
+-- PERMISSIONS
+--------------
+-- statements that fail the permission check are not reported
+drop role if exists regress_relusage_user;
+create role regress_relusage_user;
+set role regress_relusage_user;
+select * from test;
+reset role;
+drop role regress_relusage_user;
+
 ------
 -- GUC
 ------

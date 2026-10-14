@@ -113,6 +113,18 @@ LOG:  relations used: test
  Seq Scan on test (actual rows=0 loops=1)
 (1 row)
 
+--------------
+-- PERMISSIONS
+--------------
+-- statements that fail the permission check are not reported
+drop role if exists regress_relusage_user;
+NOTICE:  role "regress_relusage_user" does not exist, skipping
+create role regress_relusage_user;
+set role regress_relusage_user;
+select * from test;
+ERROR:  permission denied for table test
+reset role;
+drop role regress_relusage_user;
 ------
 -- GUC
 ------
