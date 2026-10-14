@@ -1,0 +1,36 @@
+name: Release
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+  release:
+    name: Release on PGXN
+    needs: test
+    runs-on: ubuntu-latest
+    container: pgxn/pgxn-tools
+    env:
+      PGXN_USERNAME: ${{ secrets.PGXN_USERNAME }}
+      PGXN_PASSWORD: ${{ secrets.PGXN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check that the tag matches the version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          meta=$(perl -MJSON=decode_json -E 'say decode_json(join "", <>)->{version}' META.json)
+          provides=$(perl -MJSON=decode_json -E 'say decode_json(join "", <>)->{provides}{pg_relusage}{version}' META.json)
+          control=$(sed -n "s/^default_version *= *'\(.*\)'/\1/p" pg_relusage.control)
+          echo "tag: ${tag}, META.json: ${meta}, provides: ${provides}, control: ${control}"
+          if [ "${tag}" != "${meta}" ] || [ "${tag}" != "${provides}" ] || [ "${tag}" != "${control}" ]; then
+            echo "::error::Tag does not match the version in META.json and pg_relusage.control"
+            exit 1
+          fi
+          if [ ! -f "pg_relusage--${tag}.sql" ]; then
+            echo "::error::pg_relusage--${tag}.sql is missing"
+            exit 1
+          fi
+      - name: Bundle the release
+        run: pgxn-bundle
+      - name: Release on PGXN
+        run: pgxn-release

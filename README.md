@@ -114,3 +114,13 @@ Docker images with PostgreSQL preinstalled (`pg_relusage-test:<version>`, see `t
 Expected output is the same for all PostgreSQL versions (tests that depend on features missing in older versions are skipped there, see `Makefile`). Actual test output is saved to `results/<version>/`. If changes in the output are expected, use `ACCEPT=1 ./run_test.sh 11` to update the expected output, and review the changes with `git diff expected/`.
 
 C code follows the PostgreSQL coding style. Run `tools/pgindent.sh` to reformat it with PostgreSQL's pgindent (in the same Docker image used for tests), or `tools/pgindent.sh --check` to check it without making changes.
+
+## Releasing
+
+Releases are published on [PGXN](https://pgxn.org/dist/pg_relusage/) by the `Release` GitHub workflow, which runs all the tests and then uploads the distribution (using `PGXN_USERNAME` and `PGXN_PASSWORD` repository secrets). To make a release:
+
+1. Update the version in `META.json` (in both places) and `default_version` in `pg_relusage.control`.
+2. Add `pg_relusage--<new version>.sql` and an upgrade script `pg_relusage--<old version>--<new version>.sql` (both are empty, as the extension does not define any SQL objects).
+3. Commit, tag the commit with `v<new version>` (e.g. `v1.0.1`) and push the tag.
+
+The workflow checks that the tag matches the version in `META.json` and `pg_relusage.control`.
