@@ -35,6 +35,15 @@ should produce log message along the lines of:
 relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
 ```
 
+### What counts as "used"
+
+A relation is reported when the execution plan of the statement depends on it, meaning that dropping or altering it would invalidate the plan. Besides the relations that are scanned or modified (including views, which are reported together with the relations they expand to), this includes relations referenced only by name through a `regclass` constant, for example:
+
+* sequences used via `nextval('some_seq')`, including `serial`/`identity`-style column defaults (`insert into test ...` reports `test,test_id_seq`);
+* `'some_table'::regclass` literals, and functions taking a `regclass` argument, such as `pg_relation_size('some_table')`.
+
+Such statements would break if the relation was dropped, so they are reported as users of it, even though its contents are never read.
+
 ## Configuration
 
 Extension provides two user settings:

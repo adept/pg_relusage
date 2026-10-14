@@ -125,6 +125,17 @@ select * from test;
 ERROR:  permission denied for relation test
 reset role;
 drop role regress_relusage_user;
+-----------------------
+-- REGCLASS REFERENCES
+-----------------------
+-- relations referenced via regclass constants are reported, as the statement depends on them
+select 'test'::regclass;
+LOG:  relations used: test
+ regclass 
+----------
+ test
+(1 row)
+
 ------
 -- GUC
 ------

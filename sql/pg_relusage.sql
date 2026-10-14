@@ -103,6 +103,12 @@ select * from test;
 reset role;
 drop role regress_relusage_user;
 
+-----------------------
+-- REGCLASS REFERENCES
+-----------------------
+-- relations referenced via regclass constants are reported, as the statement depends on them
+select 'test'::regclass;
+
 ------
 -- GUC
 ------
