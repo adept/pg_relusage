@@ -12,7 +12,7 @@ LOG:  relations used: test
 LOG:  relations used: test
 -- this works with built-in tables as well
 \copy (select * from pg_class c1 join pg_class c2 using (relname) limit 1) to '/dev/null';
-LOG:  relations used: pg_class
+LOG:  relations used: pg_class,pg_class_relname_nsp_index
 -- insert, update, delete statements all covered
 insert into test(t) values ('test');
 LOG:  relations used: test,test_id_seq
@@ -29,12 +29,12 @@ create view vw_test as select * from test;
 LOG:  relations used: test,vw_test
 -- more complex built-in view
 \copy (select * from pg_stats limit 1) to '/dev/null';
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index,pg_class_oid_index
 -------
 -- CTEs
 -------
 \copy (with stats as (select * from pg_stats limit 1) select * from stats) to '/dev/null';
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index,pg_class_oid_index
 ------------------------
 -- TEMP TABLES AND VIEWS
 ------------------------
@@ -71,7 +71,7 @@ return res;
 end;
 $_$;
 select * from test_pgsql_f('foobar');
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_statistic_relid_att_inh_index
  test_pgsql_f 
 --------------
  
@@ -89,7 +89,7 @@ return res;
 end;
 $_$;
 select * from test_pgsql_dyn_f('foobar');
-LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_class_relname_nsp_index,pg_statistic_relid_att_inh_index,pg_attribute_relid_attnum_index
  test_pgsql_dyn_f 
 ------------------
  
@@ -136,6 +136,41 @@ LOG:  relations used: test
  test
 (1 row)
 
+---------------------------------------
+-- ONLY RELATIONS USED BY THE FINAL PLAN
+---------------------------------------
+create table small(id int primary key, x int);
+-- left join to small is removed by the planner, so small is not reported
+\copy (select t.id from test t left join small s on s.id = t.id) to '/dev/null';
+LOG:  relations used: test
+-- indexes used by the plan are reported too
+set enable_seqscan = off;
+\copy (select * from small where id = 1) to '/dev/null';
+LOG:  relations used: small,small_pkey
+reset enable_seqscan;
+-- relation is not scanned at all
+\copy (select * from test where false) to '/dev/null';
+-- partitioned tables are reported along with partitions that are scanned
+create table parted(k int) partition by list (k);
+create table parted_1 partition of parted for values in (1);
+create table parted_2 partition of parted for values in (2);
+\copy (select * from parted) to '/dev/null';
+LOG:  relations used: parted,parted_1,parted_2
+-- partitions pruned by the planner are not reported
+\copy (select * from parted where k = 1) to '/dev/null';
+LOG:  relations used: parted,parted_1
+-- partitions pruned at executor startup are not reported
+set test.k = '2';
+\copy (select * from parted where k = current_setting('test.k')::int) to '/dev/null';
+LOG:  relations used: parted,parted_2
+-- all partitions are pruned, so nothing is scanned
+\copy (select * from parted where k = 3) to '/dev/null';
+-- target of insert is reported
+insert into parted values (1);
+LOG:  relations used: parted
+-- parent is not reported when the partition is queried directly
+\copy (select * from parted_1) to '/dev/null';
+LOG:  relations used: parted_1
 ------
 -- GUC
 ------

@@ -8,7 +8,7 @@ pg_relusage is a PostgreSQL extension which allows one to discover and log the r
 
 This extension will be useful if you are dealing with (large?) legacy database and suspect that it contains plenty of unused objects.
 
-This extension will allow you to quickly get an understanding of which clients use which objects / relations. Unlike statement log, which will only show you the views and tables explicitly referenced by the query, this extension will look at the result of view expansion, unused joins elimination etc etc and report the relations that were *actually* used by the statement.
+This extension will allow you to quickly get an understanding of which clients use which objects / relations. Unlike statement log, which will only show you the views and tables explicitly referenced by the query, this extension will look at the result of view expansion, join elimination, partition pruning etc and report the relations that were *actually* used by the statement.
 
 ## Installation
 
@@ -32,17 +32,25 @@ select * from pg_stats limit 1;
 should produce log message along the lines of:
 
 ```
-relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
+relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace,pg_statistic_relid_att_inh_index,pg_class_oid_index
 ```
 
 ### What counts as "used"
 
-A relation is reported when the execution plan of the statement depends on it, meaning that dropping or altering it would invalidate the plan. Besides the relations that are scanned or modified (including views, which are reported together with the relations they expand to), this includes relations referenced only by name through a `regclass` constant, for example:
+Tables, materialized views, foreign tables and partitions are reported when the final execution plan of the statement actually scans or modifies them. Relations that the planner eliminated are not reported, for example:
 
-* sequences used via `nextval('some_seq')`, including `serial`/`identity`-style column defaults (`insert into test ...` reports `test,test_id_seq`);
-* `'some_table'::regclass` literals, and functions taking a `regclass` argument, such as `pg_relation_size('some_table')`.
+* relations removed by join elimination (e.g. a `left join` to a table via its primary key, when none of its columns are used);
+* partitions removed by partition pruning, both at planning time and at executor startup (PostgreSQL 11+), but not partitions that are skipped later during execution;
+* relations in a part of the query that the planner proved to be empty (e.g. `where false`, or all partitions pruned).
 
-Such statements would break if the relation was dropped, so they are reported as users of it, even though its contents are never read.
+In addition, the following are reported:
+
+* partitioned tables, when any of their partitions is scanned or modified via the partitioned table (they are not scanned themselves);
+* indexes used by the plan (index scans, index-only scans and bitmap index scans);
+* views referenced by the statement, together with the relations they expand to;
+* relations referenced by name through a `regclass` constant, such as sequences used via `nextval('some_seq')` (including `serial`/`identity`-style column defaults: `insert into test ...` reports `test,test_id_seq`), `'some_table'::regclass` literals, and functions taking a `regclass` argument, such as `pg_relation_size('some_table')`. Such statements would break if the relation was dropped, so they are reported as users of it, even though its contents are never read.
+
+If the plan contains a node type that pg_relusage does not recognize (e.g. one introduced by a newer PostgreSQL version), it falls back to reporting all the relations that the plan depends on, without eliminating anything.
 
 ## Configuration
 

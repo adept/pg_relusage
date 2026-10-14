@@ -109,6 +109,44 @@ drop role regress_relusage_user;
 -- relations referenced via regclass constants are reported, as the statement depends on them
 select 'test'::regclass;
 
+---------------------------------------
+-- ONLY RELATIONS USED BY THE FINAL PLAN
+---------------------------------------
+create table small(id int primary key, x int);
+
+-- left join to small is removed by the planner, so small is not reported
+\copy (select t.id from test t left join small s on s.id = t.id) to '/dev/null';
+
+-- indexes used by the plan are reported too
+set enable_seqscan = off;
+\copy (select * from small where id = 1) to '/dev/null';
+reset enable_seqscan;
+
+-- relation is not scanned at all
+\copy (select * from test where false) to '/dev/null';
+
+-- partitioned tables are reported along with partitions that are scanned
+create table parted(k int) partition by list (k);
+create table parted_1 partition of parted for values in (1);
+create table parted_2 partition of parted for values in (2);
+\copy (select * from parted) to '/dev/null';
+
+-- partitions pruned by the planner are not reported
+\copy (select * from parted where k = 1) to '/dev/null';
+
+-- partitions pruned at executor startup are not reported
+set test.k = '2';
+\copy (select * from parted where k = current_setting('test.k')::int) to '/dev/null';
+
+-- all partitions are pruned, so nothing is scanned
+\copy (select * from parted where k = 3) to '/dev/null';
+
+-- target of insert is reported
+insert into parted values (1);
+
+-- parent is not reported when the partition is queried directly
+\copy (select * from parted_1) to '/dev/null';
+
 ------
 -- GUC
 ------
