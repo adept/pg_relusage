@@ -29,6 +29,8 @@
 #include "catalog/pg_namespace.h"
 #include "utils/guc.h"
 #include "tcop/tcopprot.h"
+#include "access/xact.h"
+#include "utils/memutils.h"
 #if PG_VERSION_NUM >= 90600
 #include "access/parallel.h"
 #endif
@@ -53,13 +55,61 @@ static const struct config_enum_entry log_level_options[] = {
 
 static char*   pg_relusage_rel_kinds = "riSvmfp";
 
+static bool pg_relusage_enabled = true;
+
+// How relations used by nested statements (executed inside functions,
+// triggers, foreign key checks etc.) are reported
+#define PG_RELUSAGE_NESTED_ALL  0  // each statement is reported separately
+#define PG_RELUSAGE_NESTED_TOP  1  // nested statements are not reported
+#define PG_RELUSAGE_NESTED_FOLD 2  // reported together with the top-level statement
+
+static int pg_relusage_nested_statements = PG_RELUSAGE_NESTED_ALL;
+
+static const struct config_enum_entry nested_statements_options[] = {
+  {"all", PG_RELUSAGE_NESTED_ALL, false},
+  {"top", PG_RELUSAGE_NESTED_TOP, false},
+  {"fold", PG_RELUSAGE_NESTED_FOLD, false},
+  {NULL, 0, false}
+};
+
+// Current nesting level of executor calls (0 when no statement is running)
+static int nesting_level = 0;
+
+// Top-level statement that is currently running
+static QueryDesc *current_top = NULL;
+
+// Relations collected for a top-level statement in "fold" mode. Names are
+// formatted as they are added, so that they could be logged at the end of
+// transaction, when catalog lookups are no longer possible.
+typedef struct
+{
+  QueryDesc *queryDesc;
+  List *oids;               // relations seen so far (reported or not)
+  StringInfoData names;     // formatted names of reported relations
+} pg_relusage_pending;
+
+// List of pg_relusage_pending, allocated in TopMemoryContext
+static List *pending = NIL;
+
 static ExecutorStart_hook_type prev_ExecutorStart = NULL;
+static ExecutorRun_hook_type prev_ExecutorRun = NULL;
+static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
+static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
 void		_PG_init(void);
 void		_PG_fini(void);
 
 static void pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags);
-static void pg_relusage_log_relations(QueryDesc *queryDesc);
+#if PG_VERSION_NUM >= 180000
+static void pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
+                                    uint64 count);
+#else
+static void pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
+                                    uint64 count, bool execute_once);
+#endif
+static void pg_relusage_ExecutorFinish(QueryDesc *queryDesc);
+static void pg_relusage_ExecutorEnd(QueryDesc *queryDesc);
+static void pg_relusage_xact_callback(XactEvent event, void *arg);
 static bool pg_relusage_plan_walker(PlanState *ps, void *context);
 
 void
@@ -88,6 +138,31 @@ _PG_init(void)
                              NULL,
                              NULL);
 
+  DefineCustomBoolVariable("pg_relusage.enabled",
+                           "Enables logging of relations used by statements.",
+                           NULL,
+                           &pg_relusage_enabled,
+                           true,
+                           PGC_SUSET,
+                           0,
+                           NULL,
+                           NULL,
+                           NULL);
+
+  DefineCustomEnumVariable("pg_relusage.nested_statements",
+                           "How relations used by nested statements are reported.",
+                           "all: every statement, including the ones executed inside functions, triggers etc., is reported separately; "
+                           "top: only top-level statements are reported; "
+                           "fold: relations used by nested statements are reported together with the top-level statement, when it finishes.",
+                           &pg_relusage_nested_statements,
+                           PG_RELUSAGE_NESTED_ALL,
+                           nested_statements_options,
+                           PGC_SUSET,
+                           0,
+                           NULL,
+                           NULL,
+                           NULL);
+
   EmitWarningsOnPlaceholders("pg_relusage");
 
   /* Install hooks only on leader. */
@@ -97,6 +172,13 @@ _PG_init(void)
 #endif
       prev_ExecutorStart = ExecutorStart_hook;
       ExecutorStart_hook = pg_relusage_ExecutorStart;
+      prev_ExecutorRun = ExecutorRun_hook;
+      ExecutorRun_hook = pg_relusage_ExecutorRun;
+      prev_ExecutorFinish = ExecutorFinish_hook;
+      ExecutorFinish_hook = pg_relusage_ExecutorFinish;
+      prev_ExecutorEnd = ExecutorEnd_hook;
+      ExecutorEnd_hook = pg_relusage_ExecutorEnd;
+      RegisterXactCallback(pg_relusage_xact_callback, NULL);
 #if PG_VERSION_NUM >= 90600
     }
 #endif
@@ -110,6 +192,10 @@ _PG_fini(void)
     {
 #endif
       ExecutorStart_hook = prev_ExecutorStart;
+      ExecutorRun_hook = prev_ExecutorRun;
+      ExecutorFinish_hook = prev_ExecutorFinish;
+      ExecutorEnd_hook = prev_ExecutorEnd;
+      UnregisterXactCallback(pg_relusage_xact_callback, NULL);
 #if PG_VERSION_NUM >= 90600
     }
 #endif
@@ -314,16 +400,15 @@ pg_relusage_append_relation(StringInfo buf, Oid oid)
 // partition pruning). Views and relations referenced via regclass constants
 // (e.g. sequences used by nextval()) are always reported. Indexes used by the
 // plan are reported as well.
-static void
-pg_relusage_log_relations(QueryDesc *queryDesc)
+static List *
+pg_relusage_collect_relations(QueryDesc *queryDesc)
 {
   PlannedStmt *stmt = queryDesc->plannedstmt;
   pg_relusage_walk_ctx ctx = {stmt->rtable, NIL, NIL, false};
   List *in_rtable = NIL;   // relations that the plan is expected to scan
   bool has_partitioned = false;
-  List *reported = NIL;
+  List *result = NIL;
   ListCell *lst;
-  StringInfoData buf;
 
   foreach(lst, stmt->rtable) {
     RangeTblEntry *rte = (RangeTblEntry *) lfirst(lst);
@@ -339,13 +424,8 @@ pg_relusage_log_relations(QueryDesc *queryDesc)
   if (has_partitioned)
     pg_relusage_add_partition_ancestors(&ctx);
 
-  initStringInfo(&buf);
-
   foreach(lst, stmt->relationOids) {
     Oid oid = lfirst_oid(lst);
-
-    // Oid list is not deduplicated
-    if (list_member_oid(reported, oid)) continue;
 
     // Skip relations eliminated from the plan. If the plan contains node types
     // we do not know about, be conservative and report everything.
@@ -353,27 +433,24 @@ pg_relusage_log_relations(QueryDesc *queryDesc)
         && !ctx.unknown_node)
       continue;
 
-    reported = lappend_oid(reported, oid);
-    pg_relusage_append_relation(&buf, oid);
+    // Oid list is not deduplicated
+    result = list_append_unique_oid(result, oid);
   }
 
-  foreach(lst, ctx.indexes) {
-    Oid oid = lfirst_oid(lst);
+  result = list_concat_unique_oid(result, ctx.indexes);
 
-    if (list_member_oid(reported, oid)) continue;
-    reported = lappend_oid(reported, oid);
-    pg_relusage_append_relation(&buf, oid);
-  }
-
-  if (buf.len > 0) {
-    ereport(pg_relusage_log_level, (errmsg("relations used: %s", buf.data), errhidestmt(true)));
-  };
-
-  pfree(buf.data);
   list_free(in_rtable);
-  list_free(reported);
   list_free(ctx.scanned);
   list_free(ctx.indexes);
+  return result;
+}
+
+static void
+pg_relusage_emit(const char *names)
+{
+  if (names[0] != '\0') {
+    ereport(pg_relusage_log_level, (errmsg("relations used: %s", names), errhidestmt(true)));
+  };
 }
 
 // Would a message of this level be sent to the server log or to the client?
@@ -402,9 +479,80 @@ pg_relusage_level_is_interesting(int elevel)
 #endif
 }
 
+static pg_relusage_pending *
+pg_relusage_find_pending(QueryDesc *queryDesc)
+{
+  ListCell *lst;
+
+  foreach(lst, pending) {
+    pg_relusage_pending *entry = (pg_relusage_pending *) lfirst(lst);
+
+    if (entry->queryDesc == queryDesc)
+      return entry;
+  }
+  return NULL;
+}
+
+static pg_relusage_pending *
+pg_relusage_new_pending(QueryDesc *queryDesc)
+{
+  MemoryContext oldcxt = MemoryContextSwitchTo(TopMemoryContext);
+  pg_relusage_pending *entry = palloc0(sizeof(pg_relusage_pending));
+
+  entry->queryDesc = queryDesc;
+  initStringInfo(&entry->names);
+  pending = lappend(pending, entry);
+  MemoryContextSwitchTo(oldcxt);
+  return entry;
+}
+
+// Add relations that were not seen before to the pending entry
+static void
+pg_relusage_add_to_pending(pg_relusage_pending *entry, List *oids)
+{
+  StringInfoData buf;
+  ListCell *lst;
+  MemoryContext oldcxt;
+
+  initStringInfo(&buf);
+  foreach(lst, oids) {
+    Oid oid = lfirst_oid(lst);
+
+    if (list_member_oid(entry->oids, oid)) continue;
+    oldcxt = MemoryContextSwitchTo(TopMemoryContext);
+    entry->oids = lappend_oid(entry->oids, oid);
+    MemoryContextSwitchTo(oldcxt);
+    pg_relusage_append_relation(&buf, oid);
+  }
+
+  if (buf.len > 0) {
+    oldcxt = MemoryContextSwitchTo(TopMemoryContext);
+    if (entry->names.len > 0)
+      appendStringInfoChar(&entry->names, ',');
+    appendBinaryStringInfo(&entry->names, buf.data, buf.len);
+    MemoryContextSwitchTo(oldcxt);
+  }
+  pfree(buf.data);
+}
+
+// Log relations collected for a top-level statement and forget about it
+static void
+pg_relusage_flush_pending(pg_relusage_pending *entry)
+{
+  pending = list_delete_ptr(pending, entry);
+  pg_relusage_emit(entry->names.data);
+  pfree(entry->names.data);
+  list_free(entry->oids);
+  pfree(entry);
+}
+
 static void
 pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
+  List *oids;
+  StringInfoData buf;
+  ListCell *lst;
+
   if (prev_ExecutorStart)
     prev_ExecutorStart(queryDesc, eflags);
   else
@@ -413,8 +561,135 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
   // Log only after the executor started successfully (e.g. permission checks
   // passed). EXPLAIN without ANALYZE does not execute the query, so nothing is used.
   // Skip all the work if there is nothing to report, or the message would be discarded.
-  if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY)
-      && pg_relusage_rel_kinds[0] != '\0'
-      && pg_relusage_level_is_interesting(pg_relusage_log_level))
-    pg_relusage_log_relations(queryDesc);
+  if (!pg_relusage_enabled
+      || (eflags & EXEC_FLAG_EXPLAIN_ONLY)
+      || pg_relusage_rel_kinds[0] == '\0'
+      || !pg_relusage_level_is_interesting(pg_relusage_log_level))
+    return;
+
+  if (pg_relusage_nested_statements == PG_RELUSAGE_NESTED_TOP && nesting_level > 0)
+    return;
+
+  oids = pg_relusage_collect_relations(queryDesc);
+
+  if (pg_relusage_nested_statements == PG_RELUSAGE_NESTED_FOLD) {
+    pg_relusage_pending *entry = (nesting_level == 0)
+      ? pg_relusage_new_pending(queryDesc)
+      : pg_relusage_find_pending(current_top);
+
+    // Nested statement could have no pending top-level entry (e.g. if the
+    // top-level statement started before pg_relusage was enabled). Then it is
+    // logged on its own.
+    if (entry) {
+      pg_relusage_add_to_pending(entry, oids);
+      list_free(oids);
+      return;
+    }
+  }
+
+  initStringInfo(&buf);
+  foreach(lst, oids)
+    pg_relusage_append_relation(&buf, lfirst_oid(lst));
+  pg_relusage_emit(buf.data);
+  pfree(buf.data);
+  list_free(oids);
+}
+
+// ExecutorRun and ExecutorFinish track the nesting level of statements, and
+// the top-level statement that is currently running. Nested statements are
+// executed from inside these (triggers and foreign key checks run in ExecutorFinish).
+static void
+#if PG_VERSION_NUM >= 180000
+pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count)
+#else
+pg_relusage_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction, uint64 count,
+                        bool execute_once)
+#endif
+{
+  QueryDesc *saved_top = current_top;
+
+  if (nesting_level == 0)
+    current_top = queryDesc;
+  nesting_level++;
+  PG_TRY();
+  {
+#if PG_VERSION_NUM >= 180000
+    if (prev_ExecutorRun)
+      prev_ExecutorRun(queryDesc, direction, count);
+    else
+      standard_ExecutorRun(queryDesc, direction, count);
+#else
+    if (prev_ExecutorRun)
+      prev_ExecutorRun(queryDesc, direction, count, execute_once);
+    else
+      standard_ExecutorRun(queryDesc, direction, count, execute_once);
+#endif
+  }
+  PG_CATCH();
+  {
+    nesting_level--;
+    current_top = saved_top;
+    PG_RE_THROW();
+  }
+  PG_END_TRY();
+  nesting_level--;
+  current_top = saved_top;
+}
+
+static void
+pg_relusage_ExecutorFinish(QueryDesc *queryDesc)
+{
+  QueryDesc *saved_top = current_top;
+
+  if (nesting_level == 0)
+    current_top = queryDesc;
+  nesting_level++;
+  PG_TRY();
+  {
+    if (prev_ExecutorFinish)
+      prev_ExecutorFinish(queryDesc);
+    else
+      standard_ExecutorFinish(queryDesc);
+  }
+  PG_CATCH();
+  {
+    nesting_level--;
+    current_top = saved_top;
+    PG_RE_THROW();
+  }
+  PG_END_TRY();
+  nesting_level--;
+  current_top = saved_top;
+}
+
+static void
+pg_relusage_ExecutorEnd(QueryDesc *queryDesc)
+{
+  // In "fold" mode, top-level statement is logged when it is finished
+  pg_relusage_pending *entry = pg_relusage_find_pending(queryDesc);
+
+  if (entry)
+    pg_relusage_flush_pending(entry);
+
+  if (prev_ExecutorEnd)
+    prev_ExecutorEnd(queryDesc);
+  else
+    standard_ExecutorEnd(queryDesc);
+}
+
+// Top-level statements that failed never reach ExecutorEnd. Log relations they
+// (and their nested statements) used before failing at the end of transaction.
+static void
+pg_relusage_xact_callback(XactEvent event, void *arg)
+{
+  switch (event) {
+    case XACT_EVENT_ABORT:
+    case XACT_EVENT_COMMIT:
+    case XACT_EVENT_PREPARE:
+      while (pending != NIL)
+        pg_relusage_flush_pending((pg_relusage_pending *) linitial(pending));
+      break;
+    default:
+      break;
+  }
 }

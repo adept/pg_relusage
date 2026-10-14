@@ -65,8 +65,15 @@ If the plan contains a node type that pg_relusage does not recognize (e.g. one i
 
 ## Configuration
 
-Extension provides two user settings:
+Extension provides the following settings (all of them can only be changed by superusers):
 
+* pg_relusage.enabled (defaults to `on`) turns logging on and off.
+* pg_relusage.nested_statements (defaults to `all`) controls how relations used by nested statements (statements executed inside functions, triggers, foreign key checks etc.) are reported:
+  * `all`: every statement is reported in a separate log message, including the nested ones. For example, `insert` into a table with a trigger that writes into `audit` table would produce two messages: `relations used: test,test_id_seq` and `relations used: audit`.
+  * `top`: only top-level statements are reported, nested statements are not processed at all. This has the lowest overhead, but relations used only by functions and triggers will never be reported, so they would look unused.
+  * `fold`: relations used by nested statements are reported together with the top-level statement, in one log message emitted when the top-level statement finishes (`relations used: test,test_id_seq,audit` in the example above). This keeps the log volume close to `top` (e.g. a function that executes a query in a loop million times produces just one message), but has the same processing overhead as `all`. If the statement fails, relations it used before the failure are reported at the end of the transaction.
+
+  Note that statements in `DO` blocks and procedures invoked by `CALL` are top-level statements, as `DO` and `CALL` are not executed by the query executor themselves.
 * pg_relusage.log_level (defaults to `LOG`), with the obvious meaning and the same set of values that similar configuration items (like `client_min_messages` support)
 * pg_relusage.rel_kinds (defaults to `'riSvmfp'`) which specifies which relation kinds will be reported. This is a list of one-letter codes used in the `relkind` field in the `pg_class` (full list could be seen [here](https://www.postgresql.org/docs/current/catalog-pg-class.html)).
 

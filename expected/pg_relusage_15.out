@@ -186,6 +186,71 @@ create table "Other Schema".small(a int);
 create table "we,ird"(a int);
 \copy (select * from "Other Schema".small, public.small, "we,ird") to '/dev/null';
 LOG:  relations used: "Other Schema".small,small,"we,ird"
+--------------------
+-- NESTED STATEMENTS
+--------------------
+create function count_items() returns bigint
+language plpgsql
+as $_$
+begin
+  return (select count(*) from items);
+end;
+$_$;
+create table audit(t text);
+create function audit_trg() returns trigger
+language plpgsql
+as $_$
+begin
+  insert into audit values (new.t);
+  return new;
+end;
+$_$;
+create trigger test_audit after insert on test for each row execute procedure audit_trg();
+create function fail_after_read() returns bigint
+language plpgsql
+as $_$
+begin
+  perform count(*) from items;
+  raise exception 'failed after reading items';
+end;
+$_$;
+-- all: every statement is reported separately (default)
+\copy (select count_items()) to '/dev/null';
+LOG:  relations used: items
+insert into test(t) values ('nested');
+LOG:  relations used: test,test_id_seq
+LOG:  relations used: audit
+-- top: only top-level statements are reported
+set pg_relusage.nested_statements = 'top';
+\copy (select count_items()) to '/dev/null';
+insert into test(t) values ('nested');
+LOG:  relations used: test,test_id_seq
+-- statements in DO blocks are top-level, as DO is not executed by the executor
+do $_$ begin perform count(*) from items; end $_$;
+LOG:  relations used: items
+-- fold: relations used by nested statements are reported with the top-level statement
+set pg_relusage.nested_statements = 'fold';
+\copy (select count_items()) to '/dev/null';
+LOG:  relations used: items
+insert into test(t) values ('nested');
+LOG:  relations used: test,test_id_seq,audit
+\copy (select count_items() from vw_items) to '/dev/null';
+LOG:  relations used: vw_items,items,owners
+-- fold: statement that failed still reports relations used before the failure
+select fail_after_read();
+LOG:  relations used: items
+ERROR:  failed after reading items
+CONTEXT:  PL/pgSQL function fail_after_read() line 4 at RAISE
+reset pg_relusage.nested_statements;
+drop trigger test_audit on test;
+-----------
+-- ENABLED
+-----------
+set pg_relusage.enabled = off;
+\copy (select * from test) to '/dev/null';
+reset pg_relusage.enabled;
+\copy (select * from test) to '/dev/null';
+LOG:  relations used: test
 ------
 -- GUC
 ------

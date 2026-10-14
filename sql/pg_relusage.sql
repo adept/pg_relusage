@@ -162,6 +162,68 @@ create table "Other Schema".small(a int);
 create table "we,ird"(a int);
 \copy (select * from "Other Schema".small, public.small, "we,ird") to '/dev/null';
 
+--------------------
+-- NESTED STATEMENTS
+--------------------
+create function count_items() returns bigint
+language plpgsql
+as $_$
+begin
+  return (select count(*) from items);
+end;
+$_$;
+
+create table audit(t text);
+create function audit_trg() returns trigger
+language plpgsql
+as $_$
+begin
+  insert into audit values (new.t);
+  return new;
+end;
+$_$;
+create trigger test_audit after insert on test for each row execute procedure audit_trg();
+
+create function fail_after_read() returns bigint
+language plpgsql
+as $_$
+begin
+  perform count(*) from items;
+  raise exception 'failed after reading items';
+end;
+$_$;
+
+-- all: every statement is reported separately (default)
+\copy (select count_items()) to '/dev/null';
+insert into test(t) values ('nested');
+
+-- top: only top-level statements are reported
+set pg_relusage.nested_statements = 'top';
+\copy (select count_items()) to '/dev/null';
+insert into test(t) values ('nested');
+-- statements in DO blocks are top-level, as DO is not executed by the executor
+do $_$ begin perform count(*) from items; end $_$;
+
+-- fold: relations used by nested statements are reported with the top-level statement
+set pg_relusage.nested_statements = 'fold';
+\copy (select count_items()) to '/dev/null';
+insert into test(t) values ('nested');
+\copy (select count_items() from vw_items) to '/dev/null';
+
+-- fold: statement that failed still reports relations used before the failure
+select fail_after_read();
+
+reset pg_relusage.nested_statements;
+drop trigger test_audit on test;
+
+-----------
+-- ENABLED
+-----------
+set pg_relusage.enabled = off;
+\copy (select * from test) to '/dev/null';
+reset pg_relusage.enabled;
+\copy (select * from test) to '/dev/null';
+
 ------
 -- GUC
 ------
