@@ -27,7 +27,7 @@ delete from test;
 create view vw_test as select * from test;
 
 -- we detect 'test' as the only relation used here
-\copy (select * from vw_test t1 join test t2 using (id)) to '/dev/null';
+\copy (select * from test t1 join vw_test t2 using (id)) to '/dev/null';
 
 -- more complex view
 create table owners(id int primary key, name text);
@@ -96,7 +96,10 @@ select * from test_pgsql_dyn_f('foobar');
 explain (costs off) select * from test;
 
 -- EXPLAIN ANALYZE executes the query, so relations are reported
+-- (plan output is hidden, as its format differs between PostgreSQL versions)
+\o /dev/null
 explain (analyze, costs off, timing off, summary off, buffers off) select * from test;
+\o
 
 --------------
 -- PERMISSIONS
@@ -105,7 +108,14 @@ explain (analyze, costs off, timing off, summary off, buffers off) select * from
 drop role if exists regress_relusage_user;
 create role regress_relusage_user;
 set role regress_relusage_user;
-select * from test;
+-- (error is caught, as its message differs between PostgreSQL versions)
+do $_$
+begin
+  perform * from test;
+exception when insufficient_privilege then
+  raise notice 'permission denied';
+end;
+$_$;
 reset role;
 drop role regress_relusage_user;
 
@@ -139,10 +149,6 @@ create table parted_2 partition of parted for values in (2);
 
 -- partitions pruned by the planner are not reported
 \copy (select * from parted where k = 1) to '/dev/null';
-
--- partitions pruned at executor startup are not reported
-set test.k = '2';
-\copy (select * from parted where k = current_setting('test.k')::int) to '/dev/null';
 
 -- all partitions are pruned, so nothing is scanned
 \copy (select * from parted where k = 3) to '/dev/null';
@@ -300,6 +306,34 @@ create extension pg_relusage version '0.0.1';
 alter extension pg_relusage update;
 select extversion from pg_extension where extname = 'pg_relusage';
 drop extension pg_relusage;
+
+-----------------------
+-- MORE STATEMENT TYPES
+-----------------------
+-- prepared statements are reported on every execution
+prepare p_count(int) as select count(*) from test where id > $1;
+execute p_count(0);
+execute p_count(0);
+deallocate p_count;
+
+-- CREATE TABLE AS and SELECT INTO report relations used by the query
+create table cta_small as select * from small;
+select * into cta_owners from owners;
+
+-- foreign key checks are nested statements, reported separately by default
+-- (only tables are reported, as whether the check uses an index is up to the planner)
+create table fk_parent(id int primary key);
+create table fk_child(parent_id int references fk_parent);
+set pg_relusage.rel_kinds = 'r';
+insert into fk_parent values (1);
+insert into fk_child values (1);
+reset pg_relusage.rel_kinds;
+
+-- foreign tables
+create extension file_fdw;
+create server files foreign data wrapper file_fdw;
+create foreign table ft_null(a int) server files options (filename '/dev/null', format 'csv');
+\copy (select * from ft_null) to '/dev/null';
 
 ------
 -- GUC

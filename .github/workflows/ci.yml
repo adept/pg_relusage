@@ -17,9 +17,7 @@ jobs:
     steps:
       - run: pg-start ${{ matrix.pg }}
       - uses: actions/checkout@v5
-      - run: |
-          cp expected/pg_relusage_${{ matrix.pg }}.out expected/pg_relusage.out
-          pg-build-test
+      - run: pg-build-test
   pgindent:
     name: pgindent
     runs-on: ubuntu-latest

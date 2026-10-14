@@ -10,6 +10,11 @@ PG_CONFIG   ?= pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+# PostgreSQL 10 does not prune partitions at executor startup
+ifeq ($(MAJORVERSION),10)
+REGRESS := $(filter-out runtime_pruning,$(REGRESS))
+endif
+
 # Defined after including PGXS, so that "all" from PGXS remains the default target
 
 # Source archive for PGXN, built from the committed HEAD

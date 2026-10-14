@@ -3,12 +3,13 @@
 #
 # Usage: ./run_test.sh <version>
 #
-# Actual output is saved to results/pg_relusage_<version>.out.
-# Set ACCEPT=1 to copy it over expected/pg_relusage_<version>.out when tests fail.
+# Actual output is saved to results/<version>/.
+# Set ACCEPT=1 to copy it over the files in expected/ when tests fail.
 # Set REBUILD=1 to rebuild the cached test image (e.g. to pick up new minor releases).
 set -euo pipefail
 
 ver="$1"
+[[ "${ver}" =~ ^[0-9]+$ ]] || { echo "Usage: $0 <PostgreSQL major version>" >&2; exit 2; }
 image="pg_relusage-test:${ver}"
 
 build_opts=()
@@ -25,16 +26,19 @@ docker run --rm -e AS_USER=worker -e LOCAL_UID="$(id -u)" \
       cp -r /src /tmp/build && cd /tmp/build
       make clean >/dev/null
       sudo pg_createcluster --start ${ver} test -p 5432 -- -A trust >/dev/null
-      cp expected/pg_relusage_${ver}.out expected/pg_relusage.out
       status=0
       pg-build-test || status=\$?
-      [ -f results/pg_relusage.out ] && cp results/pg_relusage.out /src/results/pg_relusage_${ver}.out
+      rm -rf /src/results/${ver} && mkdir -p /src/results/${ver}
+      cp results/*.out /src/results/${ver}/ 2>/dev/null || true
       exit \$status
     " || status=$?
 
-if [ "${status}" -ne 0 ] && [ -n "${ACCEPT:-}" ] && [ -f "results/pg_relusage_${ver}.out" ]; then
-    cp "results/pg_relusage_${ver}.out" "expected/pg_relusage_${ver}.out"
-    echo "PostgreSQL ${ver}: expected output updated from results/pg_relusage_${ver}.out"
+if [ "${status}" -ne 0 ] && [ -n "${ACCEPT:-}" ]; then
+    for f in results/"${ver}"/*.out; do
+        [ -f "${f}" ] || continue
+        cp "${f}" expected/
+        echo "PostgreSQL ${ver}: expected/$(basename "${f}") updated from ${f}"
+    done
 fi
 
 exit "${status}"
