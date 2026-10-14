@@ -50,6 +50,7 @@ void		_PG_init(void);
 void		_PG_fini(void);
 
 static void pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags);
+static void pg_relusage_log_relations(QueryDesc *queryDesc);
 
 void
 _PG_init(void)
@@ -105,7 +106,7 @@ _PG_fini(void)
 }
 
 static void
-pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
+pg_relusage_log_relations(QueryDesc *queryDesc)
 {
   ListCell   *lst;
   ListCell   *lst2;
@@ -154,7 +155,15 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
   };
   
   pfree(buf.data);
-  
+}
+
+static void
+pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
+{
+  // EXPLAIN without ANALYZE does not execute the query, so nothing is used
+  if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+    pg_relusage_log_relations(queryDesc);
+
   if (prev_ExecutorStart)
     prev_ExecutorStart(queryDesc, eflags);
   else

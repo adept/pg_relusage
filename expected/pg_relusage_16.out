@@ -95,6 +95,24 @@ LOG:  relations used: pg_stats,pg_statistic,pg_class,pg_attribute,pg_namespace
  
 (1 row)
 
+----------
+-- EXPLAIN
+----------
+-- plain EXPLAIN does not execute the query, so nothing is reported
+explain (costs off) select * from test;
+    QUERY PLAN    
+------------------
+ Seq Scan on test
+(1 row)
+
+-- EXPLAIN ANALYZE executes the query, so relations are reported
+explain (analyze, costs off, timing off, summary off, buffers off) select * from test;
+LOG:  relations used: test
+                QUERY PLAN                
+------------------------------------------
+ Seq Scan on test (actual rows=0 loops=1)
+(1 row)
+
 ------
 -- GUC
 ------

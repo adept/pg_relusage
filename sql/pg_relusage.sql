@@ -83,6 +83,15 @@ $_$;
 
 select * from test_pgsql_dyn_f('foobar');
 
+----------
+-- EXPLAIN
+----------
+-- plain EXPLAIN does not execute the query, so nothing is reported
+explain (costs off) select * from test;
+
+-- EXPLAIN ANALYZE executes the query, so relations are reported
+explain (analyze, costs off, timing off, summary off, buffers off) select * from test;
+
 ------
 -- GUC
 ------
