@@ -210,8 +210,9 @@ set pg_relusage.nested_statements = 'fold';
 insert into test(t) values ('nested');
 \copy (select count_items() from vw_items) to '/dev/null';
 
--- fold: statement that failed still reports relations used before the failure
-select fail_after_read();
+-- fold: statement that failed still reports relations used before the failure, at
+-- the end of transaction (error is caught, so that the order of the output is stable)
+do $_$ begin perform fail_after_read(); exception when others then null; end $_$;
 
 reset pg_relusage.nested_statements;
 drop trigger test_audit on test;
@@ -223,6 +224,30 @@ set pg_relusage.enabled = off;
 \copy (select * from test) to '/dev/null';
 reset pg_relusage.enabled;
 \copy (select * from test) to '/dev/null';
+
+-----------
+-- PARALLEL
+-----------
+-- parallel workers do not report relations, the leader reports them for the whole plan
+create table big as select g id from generate_series(1, 10000) g;
+create index big_id on big(id);
+analyze big;
+set parallel_setup_cost = 0;
+set parallel_tuple_cost = 0;
+set min_parallel_table_scan_size = 0;
+set min_parallel_index_scan_size = 0;
+set enable_seqscan = off;
+set enable_bitmapscan = off;
+set max_parallel_workers_per_gather = 2;
+explain (costs off) select count(*) from big where id < 5000;
+select count(*) from big where id < 5000;
+reset parallel_setup_cost;
+reset parallel_tuple_cost;
+reset min_parallel_table_scan_size;
+reset min_parallel_index_scan_size;
+reset enable_seqscan;
+reset enable_bitmapscan;
+reset max_parallel_workers_per_gather;
 
 ------
 -- GUC

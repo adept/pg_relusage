@@ -31,9 +31,7 @@
 #include "tcop/tcopprot.h"
 #include "access/xact.h"
 #include "utils/memutils.h"
-#if PG_VERSION_NUM >= 90600
 #include "access/parallel.h"
-#endif
 
 PG_MODULE_MAGIC;
 
@@ -165,40 +163,25 @@ _PG_init(void)
 
   EmitWarningsOnPlaceholders("pg_relusage");
 
-  /* Install hooks only on leader. */
-#if PG_VERSION_NUM >= 90600
-  if (!IsParallelWorker())
-    {
-#endif
-      prev_ExecutorStart = ExecutorStart_hook;
-      ExecutorStart_hook = pg_relusage_ExecutorStart;
-      prev_ExecutorRun = ExecutorRun_hook;
-      ExecutorRun_hook = pg_relusage_ExecutorRun;
-      prev_ExecutorFinish = ExecutorFinish_hook;
-      ExecutorFinish_hook = pg_relusage_ExecutorFinish;
-      prev_ExecutorEnd = ExecutorEnd_hook;
-      ExecutorEnd_hook = pg_relusage_ExecutorEnd;
-      RegisterXactCallback(pg_relusage_xact_callback, NULL);
-#if PG_VERSION_NUM >= 90600
-    }
-#endif
+  prev_ExecutorStart = ExecutorStart_hook;
+  ExecutorStart_hook = pg_relusage_ExecutorStart;
+  prev_ExecutorRun = ExecutorRun_hook;
+  ExecutorRun_hook = pg_relusage_ExecutorRun;
+  prev_ExecutorFinish = ExecutorFinish_hook;
+  ExecutorFinish_hook = pg_relusage_ExecutorFinish;
+  prev_ExecutorEnd = ExecutorEnd_hook;
+  ExecutorEnd_hook = pg_relusage_ExecutorEnd;
+  RegisterXactCallback(pg_relusage_xact_callback, NULL);
 }
 
 void
 _PG_fini(void)
 {
-#if PG_VERSION_NUM >= 90600
-  if (!IsParallelWorker())
-    {
-#endif
-      ExecutorStart_hook = prev_ExecutorStart;
-      ExecutorRun_hook = prev_ExecutorRun;
-      ExecutorFinish_hook = prev_ExecutorFinish;
-      ExecutorEnd_hook = prev_ExecutorEnd;
-      UnregisterXactCallback(pg_relusage_xact_callback, NULL);
-#if PG_VERSION_NUM >= 90600
-    }
-#endif
+  ExecutorStart_hook = prev_ExecutorStart;
+  ExecutorRun_hook = prev_ExecutorRun;
+  ExecutorFinish_hook = prev_ExecutorFinish;
+  ExecutorEnd_hook = prev_ExecutorEnd;
+  UnregisterXactCallback(pg_relusage_xact_callback, NULL);
 }
 
 // State for the walk over the plan tree
@@ -560,8 +543,11 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
 
   // Log only after the executor started successfully (e.g. permission checks
   // passed). EXPLAIN without ANALYZE does not execute the query, so nothing is used.
+  // Parallel workers execute parts of the plan of the leader, which reports
+  // relations for the whole plan.
   // Skip all the work if there is nothing to report, or the message would be discarded.
   if (!pg_relusage_enabled
+      || IsParallelWorker()
       || (eflags & EXEC_FLAG_EXPLAIN_ONLY)
       || pg_relusage_rel_kinds[0] == '\0'
       || !pg_relusage_level_is_interesting(pg_relusage_log_level))
