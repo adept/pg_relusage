@@ -197,3 +197,11 @@ set pg_relusage.log_level = 'NOTICE';
 set pg_relusage.rel_kinds = 'v';
 \copy (select * from vw_items limit 1) to '/dev/null';
 NOTICE:  relations used: vw_items
+-- nothing is reported when the message would be discarded
+set pg_relusage.log_level = 'DEBUG1';
+set pg_relusage.rel_kinds = 'riSvmfp';
+\copy (select * from vw_items limit 1) to '/dev/null';
+-- nothing is reported with empty rel_kinds
+set pg_relusage.log_level = 'NOTICE';
+set pg_relusage.rel_kinds = '';
+\copy (select * from vw_items limit 1) to '/dev/null';

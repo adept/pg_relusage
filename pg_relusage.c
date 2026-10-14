@@ -28,6 +28,7 @@
 #include "catalog/catalog.h"
 #include "catalog/pg_namespace.h"
 #include "utils/guc.h"
+#include "tcop/tcopprot.h"
 #if PG_VERSION_NUM >= 90600
 #include "access/parallel.h"
 #endif
@@ -375,6 +376,32 @@ pg_relusage_log_relations(QueryDesc *queryDesc)
   list_free(ctx.indexes);
 }
 
+// Would a message of this level be sent to the server log or to the client?
+static bool
+pg_relusage_level_is_interesting(int elevel)
+{
+#if PG_VERSION_NUM >= 140000
+  return message_level_is_interesting(elevel);
+#else
+  // Simplified copy of message_level_is_interesting() from PostgreSQL 14+,
+  // for the levels pg_relusage.log_level allows (DEBUG5 .. LOG)
+  bool to_server;
+  bool to_client;
+
+  if (elevel == LOG)
+    to_server = (log_min_messages == LOG || log_min_messages <= ERROR);
+  else if (log_min_messages == LOG)
+    to_server = false;
+  else
+    to_server = (elevel >= log_min_messages);
+
+  to_client = (whereToSendOutput == DestRemote
+               && (elevel >= client_min_messages || elevel == INFO));
+
+  return to_server || to_client;
+#endif
+}
+
 static void
 pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
 {
@@ -384,7 +411,10 @@ pg_relusage_ExecutorStart(QueryDesc *queryDesc, int eflags)
     standard_ExecutorStart(queryDesc, eflags);
 
   // Log only after the executor started successfully (e.g. permission checks
-  // passed). EXPLAIN without ANALYZE does not execute the query, so nothing is used
-  if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
+  // passed). EXPLAIN without ANALYZE does not execute the query, so nothing is used.
+  // Skip all the work if there is nothing to report, or the message would be discarded.
+  if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY)
+      && pg_relusage_rel_kinds[0] != '\0'
+      && pg_relusage_level_is_interesting(pg_relusage_log_level))
     pg_relusage_log_relations(queryDesc);
 }
