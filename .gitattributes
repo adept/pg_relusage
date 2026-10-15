@@ -8,3 +8,4 @@ test/                   export-ignore
 tools/                  export-ignore
 run_test.sh             export-ignore
 all_tests.sh            export-ignore
+AGENTS.md               export-ignore
