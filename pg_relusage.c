@@ -23,6 +23,7 @@
 #include "parser/parsetree.h"
 #include "catalog/partition.h"
 #include "utils/lsyscache.h"
+#include "utils/rel.h"
 #include "utils/builtins.h"
 #include "catalog/namespace.h"
 #include "catalog/catalog.h"
@@ -34,6 +35,12 @@
 #include "access/parallel.h"
 #include "tcop/utility.h"
 #include "nodes/parsenodes.h"
+#if PG_VERSION_NUM >= 120000
+#include "access/relation.h"
+#include "partitioning/partdesc.h"
+#else
+#include "access/heapam.h"
+#endif
 
 #if PG_VERSION_NUM < 100000
 #error "pg_relusage requires PostgreSQL 10 or later"
@@ -241,8 +248,10 @@ _PG_init(void)
 typedef struct
 {
 	List	   *rtable;			/* range table of the statement */
-	List	   *scanned;		/* relations scanned or modified by the plan */
-	List	   *indexes;		/* indexes used by the plan */
+	List	   *scanned;		/* relations scanned or modified by the plan
+								 * (may contain duplicates) */
+	List	   *indexes;		/* indexes used by the plan (may contain
+								 * duplicates) */
 	bool		unknown_node;	/* plan contains a node type we do not know
 								 * about */
 } pg_relusage_walk_ctx;
@@ -256,7 +265,7 @@ pg_relusage_add_rti(pg_relusage_walk_ctx *ctx, Index rti)
 		return;
 	rte = rt_fetch(rti, ctx->rtable);
 	if (rte->rtekind == RTE_RELATION)
-		ctx->scanned = list_append_unique_oid(ctx->scanned, rte->relid);
+		ctx->scanned = lappend_oid(ctx->scanned, rte->relid);
 }
 
 static void
@@ -293,14 +302,14 @@ pg_relusage_plan_walker(PlanState *ps, void *context)
 			break;
 		case T_IndexScan:
 			pg_relusage_add_rti(ctx, ((IndexScan *) plan)->scan.scanrelid);
-			ctx->indexes = list_append_unique_oid(ctx->indexes, ((IndexScan *) plan)->indexid);
+			ctx->indexes = lappend_oid(ctx->indexes, ((IndexScan *) plan)->indexid);
 			break;
 		case T_IndexOnlyScan:
 			pg_relusage_add_rti(ctx, ((IndexOnlyScan *) plan)->scan.scanrelid);
-			ctx->indexes = list_append_unique_oid(ctx->indexes, ((IndexOnlyScan *) plan)->indexid);
+			ctx->indexes = lappend_oid(ctx->indexes, ((IndexOnlyScan *) plan)->indexid);
 			break;
 		case T_BitmapIndexScan:
-			ctx->indexes = list_append_unique_oid(ctx->indexes, ((BitmapIndexScan *) plan)->indexid);
+			ctx->indexes = lappend_oid(ctx->indexes, ((BitmapIndexScan *) plan)->indexid);
 			break;
 		case T_ForeignScan:
 			/* scanrelid is 0 when a join is pushed down to the remote server */
@@ -368,34 +377,153 @@ pg_relusage_plan_walker(PlanState *ps, void *context)
 }
 
 /*
- * Partitioned tables are never scanned themselves, only their partitions are.
- * Add partitioned ancestors of all scanned partitions.
+ * Sets of relation OIDs, as sorted arrays. Statements on tables with many
+ * partitions can use thousands of relations, so membership checks on lists
+ * would be too slow.
  */
-static void
-pg_relusage_add_partition_ancestors(pg_relusage_walk_ctx *ctx)
+typedef struct
 {
-	List	   *ancestors = NIL;
+	Oid		   *oids;
+	int			n;
+} pg_relusage_oidset;
+
+static int
+pg_relusage_oid_cmp(const void *a, const void *b)
+{
+	Oid			x = *(const Oid *) a;
+	Oid			y = *(const Oid *) b;
+
+	return (x > y) - (x < y);
+}
+
+static pg_relusage_oidset
+pg_relusage_oidset_from_list(List *list)
+{
+	pg_relusage_oidset set;
 	ListCell   *lst;
 
-	foreach(lst, ctx->scanned)
+	set.n = 0;
+	set.oids = palloc(sizeof(Oid) * (list_length(list) + 1));
+	foreach(lst, list)
+		set.oids[set.n++] = lfirst_oid(lst);
+	qsort(set.oids, set.n, sizeof(Oid), pg_relusage_oid_cmp);
+	return set;
+}
+
+static bool
+pg_relusage_oidset_member(pg_relusage_oidset *set, Oid oid)
+{
+	return set->n > 0
+		&& bsearch(&oid, set->oids, set->n, sizeof(Oid), pg_relusage_oid_cmp) != NULL;
+}
+
+/* Remove duplicates from the list of OIDs, keeping the first occurrences */
+typedef struct
+{
+	Oid			oid;
+	int			pos;
+} pg_relusage_oid_pos;
+
+static int
+pg_relusage_oid_pos_cmp(const void *a, const void *b)
+{
+	const pg_relusage_oid_pos *x = (const pg_relusage_oid_pos *) a;
+	const pg_relusage_oid_pos *y = (const pg_relusage_oid_pos *) b;
+
+	if (x->oid != y->oid)
+		return (x->oid > y->oid) - (x->oid < y->oid);
+	return x->pos - y->pos;
+}
+
+static List *
+pg_relusage_unique_oids(List *list)
+{
+	int			n = list_length(list);
+	pg_relusage_oid_pos *items;
+	bool	   *keep;
+	List	   *result = NIL;
+	ListCell   *lst;
+	int			i;
+
+	if (n <= 1)
+		return list_copy(list);
+
+	items = palloc(sizeof(pg_relusage_oid_pos) * n);
+	keep = palloc0(sizeof(bool) * n);
+	i = 0;
+	foreach(lst, list)
 	{
-		Oid			oid = lfirst_oid(lst);
-
-		if (!get_rel_relispartition(oid))
-			continue;
-#if PG_VERSION_NUM >= 110000
-		ancestors = list_concat_unique_oid(ancestors, get_partition_ancestors(oid));
-#else
-		while (get_rel_relispartition(oid))
-		{
-			oid = get_partition_parent(oid);
-			ancestors = list_append_unique_oid(ancestors, oid);
-		}
-#endif
+		items[i].oid = lfirst_oid(lst);
+		items[i].pos = i;
+		i++;
 	}
+	qsort(items, n, sizeof(pg_relusage_oid_pos), pg_relusage_oid_pos_cmp);
+	for (i = 0; i < n; i++)
+		if (i == 0 || items[i].oid != items[i - 1].oid)
+			keep[items[i].pos] = true;
 
-	ctx->scanned = list_concat_unique_oid(ctx->scanned, ancestors);
-	list_free(ancestors);
+	i = 0;
+	foreach(lst, list)
+	{
+		if (keep[i++])
+			result = lappend_oid(result, lfirst_oid(lst));
+	}
+	pfree(items);
+	pfree(keep);
+	return result;
+}
+
+/*
+ * Partitioned tables are never scanned themselves, only their partitions are.
+ * Returns the partitioned tables (out of the given ones, from the range table)
+ * that have any of their partitions, directly or through other partitioned
+ * tables, among the scanned relations. Uses partition descriptors, which are
+ * cached in relcache, instead of looking up the parent of every scanned
+ * partition in the catalog.
+ */
+static List *
+pg_relusage_used_partitioned(List *partitioned, pg_relusage_oidset *scanned)
+{
+	List	   *used = NIL;
+	bool		changed = true;
+
+	/* Repeat to propagate usage through multiple levels of partitioning */
+	while (changed)
+	{
+		ListCell   *lst;
+
+		changed = false;
+		foreach(lst, partitioned)
+		{
+			Oid			parent = lfirst_oid(lst);
+			Relation	rel;
+			PartitionDesc partdesc;
+			int			i;
+
+			if (list_member_oid(used, parent))
+				continue;
+
+			/* Relations from the range table are locked by the executor */
+			rel = relation_open(parent, NoLock);
+#if PG_VERSION_NUM >= 140000
+			partdesc = RelationGetPartitionDesc(rel, false);
+#else
+			partdesc = RelationGetPartitionDesc(rel);
+#endif
+			for (i = 0; partdesc && i < partdesc->nparts; i++)
+			{
+				if (pg_relusage_oidset_member(scanned, partdesc->oids[i])
+					|| list_member_oid(used, partdesc->oids[i]))
+				{
+					used = lappend_oid(used, parent);
+					changed = true;
+					break;
+				}
+			}
+			relation_close(rel, NoLock);
+		}
+	}
+	return used;
 }
 
 /* Append name of the relation to the buffer, if it is of the kind we report */
@@ -466,10 +594,13 @@ pg_relusage_collect_relations(QueryDesc *queryDesc)
 {
 	PlannedStmt *stmt = queryDesc->plannedstmt;
 	pg_relusage_walk_ctx ctx = {stmt->rtable, NIL, NIL, false};
-	List	   *in_rtable = NIL;	/* relations that the plan is expected to
-									 * scan */
-	bool		has_partitioned = false;
-	List	   *result = NIL;
+	List	   *expected = NIL; /* relations that the plan is expected to scan */
+	List	   *partitioned = NIL;	/* partitioned tables in the range table */
+	List	   *used_partitioned = NIL;
+	pg_relusage_oidset in_rtable;
+	pg_relusage_oidset scanned;
+	List	   *relations = NIL;
+	List	   *result;
 	ListCell   *lst;
 
 	foreach(lst, stmt->rtable)
@@ -479,15 +610,18 @@ pg_relusage_collect_relations(QueryDesc *queryDesc)
 		/* Views are expanded by the rewriter and are never scanned */
 		if (rte->rtekind != RTE_RELATION || rte->relkind == RELKIND_VIEW)
 			continue;
-		in_rtable = list_append_unique_oid(in_rtable, rte->relid);
+		expected = lappend_oid(expected, rte->relid);
 		if (rte->relkind == RELKIND_PARTITIONED_TABLE)
-			has_partitioned = true;
+			partitioned = list_append_unique_oid(partitioned, rte->relid);
 	}
+	in_rtable = pg_relusage_oidset_from_list(expected);
 
 	if (queryDesc->planstate)
 		pg_relusage_plan_walker(queryDesc->planstate, &ctx);
-	if (has_partitioned)
-		pg_relusage_add_partition_ancestors(&ctx);
+	scanned = pg_relusage_oidset_from_list(ctx.scanned);
+
+	if (partitioned != NIL)
+		used_partitioned = pg_relusage_used_partitioned(partitioned, &scanned);
 
 	foreach(lst, stmt->relationOids)
 	{
@@ -497,19 +631,26 @@ pg_relusage_collect_relations(QueryDesc *queryDesc)
 		 * Skip relations eliminated from the plan. If the plan contains node
 		 * types we do not know about, be conservative and report everything.
 		 */
-		if (list_member_oid(in_rtable, oid) && !list_member_oid(ctx.scanned, oid)
+		if (pg_relusage_oidset_member(&in_rtable, oid)
+			&& !pg_relusage_oidset_member(&scanned, oid)
+			&& !list_member_oid(used_partitioned, oid)
 			&& !ctx.unknown_node)
 			continue;
 
-		/* Oid list is not deduplicated */
-		result = list_append_unique_oid(result, oid);
+		relations = lappend_oid(relations, oid);
 	}
 
-	result = list_concat_unique_oid(result, ctx.indexes);
+	/* Oid lists are not deduplicated */
+	relations = list_concat(relations, ctx.indexes);
+	result = pg_relusage_unique_oids(relations);
 
-	list_free(in_rtable);
+	pfree(in_rtable.oids);
+	pfree(scanned.oids);
+	list_free(expected);
+	list_free(partitioned);
+	list_free(used_partitioned);
 	list_free(ctx.scanned);
-	list_free(ctx.indexes);
+	list_free(relations);
 	return result;
 }
 

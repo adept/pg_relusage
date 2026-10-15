@@ -159,6 +159,16 @@ insert into parted values (1);
 -- parent is not reported when the partition is queried directly
 \copy (select * from parted_1) to '/dev/null';
 
+-- multi-level partitioning: all partitioned ancestors of scanned partitions are reported
+create table ml(k int, j int) partition by list (k);
+create table ml_1 partition of ml for values in (1) partition by list (j);
+create table ml_1_1 partition of ml_1 for values in (1);
+create table ml_1_2 partition of ml_1 for values in (2);
+create table ml_2 partition of ml for values in (2);
+\copy (select * from ml where k = 1 and j = 2) to '/dev/null';
+\copy (select * from ml where k = 2) to '/dev/null';
+\copy (select * from ml_1) to '/dev/null';
+
 ---------------
 -- NAME QUOTING
 ---------------
