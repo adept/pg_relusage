@@ -12,10 +12,28 @@ This extension will allow you to quickly get an understanding of which clients u
 
 ## Installation
 
-Extension hooks into PostgreSQL query executor and therefore needs to be compiled using PostgreSQL headers for the appropriate server version,
-and then loaded into server process.
+pg_relusage hooks into the PostgreSQL query executor, so it has to be compiled against the headers of the PostgreSQL version it will run with. Install the server development files first (e.g. `postgresql-server-dev-17` on Debian and Ubuntu, `postgresql17-devel` with the PGDG RPM packages).
 
-Extension uses standard PGXS build infrastructure and (provided that `pg_config` is somewhere in your PATH) could be built with `make install`.
+### From PGXN
+
+pg_relusage is distributed on [PGXN](https://pgxn.org/dist/pg_relusage/). With the [PGXN client](https://pgxn.github.io/pgxnclient/) (`pip install pgxnclient`, or the `pgxnclient` package of your distribution), download, build and install the latest version with:
+
+```
+pgxn install pg_relusage --sudo
+```
+
+`--sudo` runs only the installation step with `sudo` (note that it has to come after the extension name). If several PostgreSQL versions are installed, choose one with `--pg_config`, e.g. `pgxn install pg_relusage --sudo --pg_config /usr/lib/postgresql/17/bin/pg_config`.
+
+### From source
+
+The extension uses the standard PGXS build infrastructure. In a checkout of the repository (or an unpacked release archive), with `pg_config` of the target PostgreSQL version in your `PATH`, run:
+
+```
+make
+sudo make install
+```
+
+Use `make PG_CONFIG=/path/to/pg_config` to build for a specific PostgreSQL version.
 
 ## Usage
 
