@@ -1,4 +1,4 @@
-/* pg_relusage--1.0.1.sql */
+/* pg_relusage--1.0.2.sql */
 
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION pg_relusage" to load this file. \quit

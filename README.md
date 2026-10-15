@@ -101,6 +101,15 @@ Extension provides the following settings (all of them can only be changed by su
 * pg_relusage.log_level (defaults to `log`) is the level of the log messages: one of `debug5`, `debug4`, `debug3`, `debug2`, `debug1` (`debug` is an alias for `debug2`), `info`, `notice`, `warning` and `log`. Whether a message is written to the server log and/or sent to the client is decided by [log_min_messages and client_min_messages](https://www.postgresql.org/docs/current/runtime-config-logging.html#RUNTIME-CONFIG-SEVERITY-LEVELS), as for any other message. With default settings, `log` messages are written to the server log only, `info` and `notice` messages are sent to the client only (`info` messages are always sent to the client), and `warning` messages go to both. If the message would not be written or sent anywhere, pg_relusage skips all the work of collecting the relations, so it has no overhead in that case.
 * pg_relusage.rel_kinds (defaults to `'riSvmfp'`) specifies which relation kinds will be reported. This is a list of one-letter codes used in the `relkind` field in the `pg_class` (full list could be seen [here](https://www.postgresql.org/docs/current/catalog-pg-class.html)). The default reports tables (`r`), indexes (`i`), sequences (`S`), views (`v`), materialized views (`m`), foreign tables (`f`) and partitioned tables (`p`). For example, use `'rSvmfp'` to stop reporting indexes.
 
+## Performance
+
+The numbers below were measured with pgbench (single client, prepared statements) on PostgreSQL 17. Absolute numbers depend on hardware and workload, but they show what the overhead depends on:
+
+* When pg_relusage is disabled (`pg_relusage.enabled = off`), or its messages would be discarded because of `log_min_messages` and `client_min_messages`, the overhead is too small to measure.
+* When every statement is logged, a short statement (a query on a view joining three tables, taking 51 µs without pg_relusage) took 66 µs, i.e. about 15 µs longer. Most of this is the cost of writing a log line for every statement, so for workloads with many short statements, consider logging only for some databases or roles (see `session_preload_libraries` above), or for a limited period of time.
+* The cost grows with the number of relations a statement uses. On a table with 2000 partitions, a statement that scans all of them took 1.7 ms longer (26.8 ms instead of 25.2 ms), most of it for formatting the 2000 relation names in the log message. A prepared statement with a generic plan, which scans a single partition after pruning at executor startup, took 0.35 ms longer (1.2 ms instead of 0.9 ms).
+* With `pg_relusage.nested_statements = 'top'`, nested statements are not processed at all. With `fold`, they are processed as with `all`, but fewer log lines are written.
+
 ## Limitations
 
 Supported PostgreSQL versions are 10 to 18.
